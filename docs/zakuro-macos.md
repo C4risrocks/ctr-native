@@ -63,8 +63,8 @@ Hallazgos medidos (cierran el misterio del "vertices shaded on the CPU"):
 2. Audio: auditing de los "sound ran dry" esporádicos (underruns aislados en
    ~4.5 h de sesión, con un racimo al final) — G2 pendiente, ya con contador
    acumulado por la sesión en la línea kpi.
-3. HLE gaps menores: `cecd:u` cmd 0x0012 (StreetPass) sin implementar — aviso
-   benigno al boot de ALBW; G3 pendiente.
+3. ~~HLE gaps menores: `cecd:u` cmd 0x0012~~ — G3 cerrado: OpenAndRead lee
+   el inbox vacío offline con test in-crate y boot real sin WARN (patch 0005).
 4. Metal-direct (G4): informe go/no-go — ahora con dato de costo: el GPU
    shading vía MoltenVK corta 6.7× (357 MIPS) en M1 Pro, así que el valor de
    un backend Metal directo estaría en el raster/PSO, no en resolver esto.
