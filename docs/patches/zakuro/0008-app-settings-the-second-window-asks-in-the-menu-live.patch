@@ -1,0 +1,194 @@
+From 190ab01f1226bf494af02ce92c77491fbec64fe6 Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 16:45:53 -0600
+Subject: [PATCH] settings: the second window asks in the menu, live
+
+the window and its monitor join the settings dialog as combos, the
+desktop's monitors listed while it stays open; the settings' say
+applies as it is asked: opened, moved or closed, with no restart. the
+run's --split/--monitor-bottom keep their say over it.
+---
+ crates/zakuro/src/lib.rs      | 50 +++++++++++++++++++++++++++++++++--
+ crates/zakuro/src/menus.rs    | 25 +++++++++++++++++-
+ crates/zakuro/src/settings.rs | 13 +++++++++
+ 3 files changed, 85 insertions(+), 3 deletions(-)
+
+diff --git a/crates/zakuro/src/lib.rs b/crates/zakuro/src/lib.rs
+index 34203a0..fc27b68 100644
+--- a/crates/zakuro/src/lib.rs
++++ b/crates/zakuro/src/lib.rs
+@@ -118,6 +118,7 @@ pub fn run_with(linked: Option<Linked>, overlay: Option<Box<dyn GameOverlay>>) {
+         companion_backend: None,
+         companion: None,
+         companion_id: None,
++        companion_serving: None,
+         audio: None,
+         mouse_down: false,
+         tilting_from: None,
+@@ -412,6 +413,9 @@ struct App {
+     companion_backend: Option<Backend>,
+     companion: Option<Window>,
+     companion_id: Option<WindowId>,
++    /// what the window that is open serves with: the settings it was
++    /// opened by, to know when the settings' say changes it.
++    companion_serving: Option<(settings::CompanionWindow, Option<usize>)>,
+     keyboard: Keyboard,
+     gamepads: gamepad::Gamepads,
+     audio: Option<audio::Audio>,
+@@ -632,13 +636,22 @@ impl ApplicationHandler for App {
+         }
+     }
+ 
+-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
++    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+         if let Some(window) = &self.window {
+             window.request_redraw();
+         }
+         if let Some(window) = &self.companion {
+             window.request_redraw();
+         }
++        // the desktop's monitors, listed while the settings are open for
++        // the second window's unsigned choice
++        if self.menus.settings_open && self.menus.monitors.is_empty() {
++            self.menus.monitors = event_loop
++                .available_monitors()
++                .enumerate()
++                .filter_map(|(index, monitor)| monitor.name().map(|name| (index, name)))
++                .collect();
++        }
+     }
+ 
+     /// the session's one kpi line, for the log file and thereby the docs'
+@@ -866,6 +879,7 @@ impl App {
+         self.companion_id = Some(window.id());
+         self.companion = Some(window);
+         self.companion_backend = Some(backend);
++        self.companion_serving = Some((wanted, self.settings.companion_monitor));
+         Ok(())
+     }
+ 
+@@ -876,6 +890,35 @@ impl App {
+         drop(self.companion_backend.take());
+         self.companion = None;
+         self.companion_id = None;
++        self.companion_serving = None;
++    }
++
++    /// the settings' say over the second window, applied live: opened,
++    /// moved to another monitor, or closed, from the menu's settings.
++    fn apply_companion(&mut self, event_loop: &ActiveEventLoop) {
++        let wanted = self.companion_kind();
++        let monitor = self.settings.companion_monitor;
++        let wanted_serving = if self.companion_run_only() { return; } else { Some((wanted, monitor)) };
++        if wanted_serving == self.companion_serving {
++            return;
++        }
++        match wanted {
++            settings::CompanionWindow::Off => self.close_companion(),
++            _ => {
++                // the kind and the monitor both change with one window's
++                // worth of work: close, then open it again
++                self.close_companion();
++                if let Err(error) = self.open_companion(event_loop) {
++                    log::warn!("no companion window, {error}");
++                }
++            }
++        }
++    }
++
++    /// whether the run's own flags, not the settings, say the second
++    /// window's state, which the menu then does not touch.
++    fn companion_run_only(&self) -> bool {
++        self.options.split.is_some() || self.options.split_spike
+     }
+ 
+     /// whether this run wants a second window, the command line's say
+@@ -1349,7 +1392,10 @@ impl App {
+                 }
+             }
+             Action::Quit => event_loop.exit(),
+-            Action::Settings => self.apply_settings(),
++            Action::Settings => {
++                self.apply_settings();
++                self.apply_companion(event_loop);
++            }
+             Action::Keyboard(text, button) => {
+                 if let Some(game) = &mut self.game {
+                     game.system.answer_keyboard(&text, button);
+diff --git a/crates/zakuro/src/menus.rs b/crates/zakuro/src/menus.rs
+index 9372f02..e44a861 100644
+--- a/crates/zakuro/src/menus.rs
++++ b/crates/zakuro/src/menus.rs
+@@ -11,7 +11,7 @@ use zakuro_core::services::keyboard::Request;
+ use crate::library::{Library, ICON_SIZE};
+ use crate::recompile::{Job, Stage};
+ use crate::gamepad::button_name;
+-use crate::settings::{CameraSource, Filter, Keys, Language, PadButtons, Renderer, Screens, Settings, Stereo3d, TopShape};
++use crate::settings::{CameraSource, CompanionWindow, Filter, Keys, Language, PadButtons, Renderer, Screens, Settings, Stereo3d, TopShape};
+ 
+ /// what the user asked for.
+ #[derive(Debug, Clone, PartialEq)]
+@@ -71,6 +71,9 @@ pub struct Menus {
+     cheat_name: String,
+     cheat_code: String,
+     pub settings_open: bool,
++    /// the monitors the desktop has, refreshed while the settings stay
++    /// open, by number and name.
++    pub monitors: Vec<(usize, String)>,
+     /// the binding waiting for a key, by its place in Keys::all_mut.
+     pub rebinding: Option<usize>,
+     /// the controller binding waiting for a button, by its place in
+@@ -699,6 +702,26 @@ impl Menus {
+                         ui.selectable_value(&mut settings.layout, layout, layout.name());
+                     }
+                 });
++                egui::ComboBox::from_label("Second window")
++                    .selected_text(settings.companion_window.name())
++                    .show_ui(ui, |ui| {
++                        for window in CompanionWindow::ALL {
++                            ui.selectable_value(&mut settings.companion_window, window, window.name());
++                        }
++                    })
++                    .response
++                    .on_hover_text("A plain window draws one screen alone, on the monitor named below, straight from the same frames it runs; the keyboard goes to the main one, the touch to whichever shows the bottom.");
++                egui::ComboBox::from_label("Second window's monitor")
++                    .selected_text(match settings.companion_monitor {
++                        Some(index) => self.monitors.iter().find(|(one, _)| *one == index).map_or(format!("Monitor {index}"), |(_, name)| name.clone()),
++                        None => "The monitor after the main window's".into(),
++                    })
++                    .show_ui(ui, |ui| {
++                        ui.selectable_value(&mut settings.companion_monitor, None, "The monitor after the main window's");
++                        for (index, name) in &self.monitors {
++                            ui.selectable_value(&mut settings.companion_monitor, Some(*index), name);
++                        }
++                    });
+                 egui::ComboBox::from_label("Filter").selected_text(settings.filter.name()).show_ui(ui, |ui| {
+                     for filter in Filter::ALL {
+                         ui.selectable_value(&mut settings.filter, filter, filter.name());
+diff --git a/crates/zakuro/src/settings.rs b/crates/zakuro/src/settings.rs
+index 085fa3a..c4fbc73 100644
+--- a/crates/zakuro/src/settings.rs
++++ b/crates/zakuro/src/settings.rs
+@@ -114,6 +114,19 @@ pub enum CompanionWindow {
+     TopOnly,
+ }
+ 
++impl CompanionWindow {
++    pub const ALL: [CompanionWindow; 3] =
++        [CompanionWindow::Off, CompanionWindow::BottomOnly, CompanionWindow::TopOnly];
++
++    pub fn name(self) -> &'static str {
++        match self {
++            CompanionWindow::Off => "Off, one window",
++            CompanionWindow::BottomOnly => "The bottom screen alone",
++            CompanionWindow::TopOnly => "The top screen alone",
++        }
++    }
++}
++
+ /// the top screen's shape. a game draws into 400x240 whatever this is, so
+ /// anything but the console's own only looks right with a widescreen code
+ /// on, which makes the game draw a wider scene into those pixels.
+-- 
+2.56.0
+
