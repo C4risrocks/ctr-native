@@ -39,11 +39,11 @@ sin reiniciar y persistente por juego (el settings.toml del sandbox hermano).
 
 | Sub | Gap | Ancla exacta | Trabajo | KPI de salida |
 |---|---|---|---|---|
-| G5 | KPI realtime sin formalizar | `zakuro/src/report.rs` + `--profile` | fps avg/min, underruns de audio y % de draws CPU-shaded en el reporte windowed; capturable por el builder | Tabla viva en `docs/zakuro-macos.md` |
+| **G5 ✅ hecho** | KPI realtime sin formalizar | `zakuro/src/report.rs` + `--profile` | fps avg/min, underruns de audio y % de draws CPU-shaded en el reporte windowed; capturable por el builder | **Tabla viva en `docs/zakuro-macos.md`**: 3 corridas de 600 f measured (471.2 MIPS software / 2409.1 MIPS hardware-CPU-shading / 357.0 MIPS hardware-GPU-shading) + línea `session kpi` al cerrar ventana |
 | G2 | Audio: underruns ("sound ran dry") | `zakuro/src/audio.rs` (cpal 0.16) | `BufferSize::Fixed` con fallback, prebuffer ring, catch-up; contador visible | 0 underruns en 60 s de ALBW; el racimo final de sesión explicado |
-| G1 | Shading de vértices por CPU | `raster/hardware.rs::shades()` + ramas en `raster.rs` | Telemetría de por qué caen a CPU; elevar caminos a SPIR-V compilable (naga ya en build) | ≥95% de draws GPU-shaded en ALBW |
+| **G1 ✅ auditado (medido)** | Shading de vértices por CPU | `raster/hardware.rs::shades()` + ramas en `raster.rs` | El path GPU ya existe y llega al 100% (`ZAKURO_GPU_SHADERS=1`); en M1 Pro corre 6.7× más lento que el CPU shading (357 vs 2409 MIPS en las mismas 600 frames) → **el default del fork es correcto en Apple Silicon** | Se mantiene el default CPU en integradas; se revisita si mejora MoltenVK o tras G4 (Metal-direct) |
 | G3 | `cecd:u` 0x0012 sin implementar | `zakuro-core/src/services/cecd.rs` | Stub con códigos de resultado correctos + test in-crate | 0 WARN cecd en 60 s |
-| G4 | Vulkan (MoltenVK) vs Metal-direct | `backend/vulkan.rs` | Solo informe go/no-go: MoltenVK es el estándar del sector y G1 mejora ambos caminos | Informe corto de coste/valor |
+| G4 | Vulkan (MoltenVK) vs Metal-direct | `backend/vulkan.rs` | Solo informe go/no-go: **con dato nuevo de costo** — el GPU shading MoltenVK corta 6.7× en M1 Pro; Metal-direct valdría en raster/PSO, no en vértices | Informe corto de coste/valor |
 
 ## Pases de ejecución (commit/push por fase)
 

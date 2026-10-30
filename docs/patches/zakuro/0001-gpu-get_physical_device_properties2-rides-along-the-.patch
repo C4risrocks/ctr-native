@@ -1,0 +1,54 @@
+From e7b8cf53aa03bcc498f45e913b8dbac679213375 Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 10:07:14 -0600
+Subject: [PATCH 1/2] gpu: get_physical_device_properties2 rides along the
+ portability instance
+
+VK_KHR_portability_subset, which only portability drivers expose, is bound
+by the spec to get_physical_device_properties2 on the instance; prop2 is
+core since 1.1, so asking for it costs nothing on macOS and satisfies the
+requirement the day subset turns on (the pattern ash-examples ships).
+---
+ crates/zakuro-gpu/src/backend/vulkan.rs  | 6 ++++++
+ crates/zakuro-gpu/src/raster/hardware.rs | 8 +++++++-
+ 2 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/crates/zakuro-gpu/src/backend/vulkan.rs b/crates/zakuro-gpu/src/backend/vulkan.rs
+index 3dc31ef..d01f63f 100644
+--- a/crates/zakuro-gpu/src/backend/vulkan.rs
++++ b/crates/zakuro-gpu/src/backend/vulkan.rs
+@@ -189,6 +189,12 @@ impl VulkanPresenter {
+             || is_portability_system();
+         if portability {
+             extensions.push(ash::khr::portability_enumeration::NAME.as_ptr());
++            // portability drivers (MoltenVK, KosmicKrisp) may also expose the
++            // device extension VK_KHR_portability_subset, and the spec binds
++            // enabling it to get_physical_device_properties2 on the instance;
++            // prop2 is core since 1.1, so this costs nothing on macOS and is
++            // the requirement the day subset turns on (ash-examples ships both)
++            extensions.push(ash::khr::get_physical_device_properties2::NAME.as_ptr());
+         }
+         let instance_info = vk::InstanceCreateInfo::default()
+             .application_info(&application)
+diff --git a/crates/zakuro-gpu/src/raster/hardware.rs b/crates/zakuro-gpu/src/raster/hardware.rs
+index b49cca9..9726975 100644
+--- a/crates/zakuro-gpu/src/raster/hardware.rs
++++ b/crates/zakuro-gpu/src/raster/hardware.rs
+@@ -5720,7 +5720,13 @@ pub(crate) fn own_device() -> Result<SharedDevice, String> {
+     // the loader only enumerates a conformant portability driver (MoltenVK,
+     // KosmicKrisp) for instances that opt in
+     let portability = crate::backend::vulkan::is_portability_system();
+-    let portability_extensions = [ash::khr::portability_enumeration::NAME.as_ptr()];
++    // props2 rides along with portability: VK_KHR_portability_subset (which
++    // only these drivers expose) is bound by spec to get_physical_device_
++    // properties2, and prop2 itself is core since 1.1 — free preventive insurance
++    let portability_extensions = [
++        ash::khr::portability_enumeration::NAME.as_ptr(),
++        ash::khr::get_physical_device_properties2::NAME.as_ptr(),
++    ];
+     let instance_info = vk::InstanceCreateInfo::default()
+         .application_info(&app)
+         .enabled_extension_names(if portability {
+-- 
+2.56.0
+

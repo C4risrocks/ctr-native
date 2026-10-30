@@ -19,6 +19,29 @@ local preventivo, ver "Resueltas").
 - `.dylib` (arm64, Mach-O) instalado en `~/Library/Application Support/3dsrecomp/00040000000EC300.dylib` — pasa AMFI sin parches (firma válida embedida)
 - El juego: ALBW USA `00040000000EC300` (dump decrypted verificado No-Intro, pin MD5 en `dm/games/00040000000EC300/`)
 
+## KPI G5 · runs de 600 frames AOT (2026-10-30, M1 Pro, cabeza sin ventana)
+
+| Corrida | Renderer | Shading de vértices | 600 frames | MIPS | Draws |
+|---|---|---|---|---|---|
+| headless | software | CPU (por definición) | 5.71 s | 471.2 | 10 067 · 0% GPU |
+| headless | hardware (Vulkan) | **CPU — default en Apple Silicon** | 1.12 s | **2409.1** | 10 789 · 0% GPU |
+| headless | hardware | GPU forzada (`ZAKURO_GPU_SHADERS=1`) | 7.53 s | 357.0 | 10 789 · 100% GPU |
+
+Hallazgos medidos (cierran el misterio del "vertices shaded on the CPU"):
+
+- El fork YA tiene el path completo de shading en GPU: se llega al 100% de
+  draws GPU-shaded pidiéndolo; el default lo manda a CPU en GPUs
+  integradas/embedded ("an integrated GPU does worse at it than the CPU",
+  comentario del fork) y **la medición le da la razón**: CPU shading corre
+  6.7× más rápido que el GPU shading en M1 Pro (franja `gpu`: 199.9 ms vs 6.3 s).
+- La línea del log es una decisión de capacidad, no una deficiencia: F8-G1
+  queda como "auditoría hecha — default correcto, path GPU verificado,
+  revisitar si mejora MoltenVK o se decide Metal-direct (G4)".
+- Desde G5 el runtime estampa al cerrar una línea `session kpi` (fps avg/min,
+  underruns totales, % de draws GPU-shaded) que alimenta esta tabla por
+  release; `docs/patches/zakuro/` lleva los parches del fork (0001 props2,
+  0002 kpi).
+
 ## Resueltas (delta darwin cerrado)
 
 1. **Vulkan portable**: el instance opta por `VK_KHR_portability_enumeration` +
@@ -35,13 +58,18 @@ local preventivo, ver "Resueltas").
 ## Pendientes (delta darwin conocido)
 
 1. `--headless` corre sin pacing: las cifras son throughput, no fps realtime
-   (las sesiones en ventana sí van con pacing FIFO).
+   (las sesiones en ventana sí van con pacing FIFO; la `session kpi` de G5 da
+   el fps real al cerrar).
 2. Audio: auditing de los "sound ran dry" esporádicos (underruns aislados en
-   ~4.5 h de sesión, con un racimo al final) — sin causa identificada aún.
-3. HLE gaps menores: `cecd:u` cmd 0x0012 (StreetPass) sin implementar — avisos
-   benignos para ALBW.
-4. PR de cortesía upstream: LICENSE file en `3dsrecomp` (declara MIT en
-   Cargo.toml pero no lleva el archivo).
-5. El renderer de shaders traduce POR CPU (naga wgsl-in→spv-out) y raster por
-   GPU; performance de vértices sigue siendo el cuello cuando el CPU cede
-   (ver underruns).
+   ~4.5 h de sesión, con un racimo al final) — G2 pendiente, ya con contador
+   acumulado por la sesión en la línea kpi.
+3. HLE gaps menores: `cecd:u` cmd 0x0012 (StreetPass) sin implementar — aviso
+   benigno al boot de ALBW; G3 pendiente.
+4. Metal-direct (G4): informe go/no-go — ahora con dato de costo: el GPU
+   shading vía MoltenVK corta 6.7× (357 MIPS) en M1 Pro, así que el valor de
+   un backend Metal directo estaría en el raster/PSO, no en resolver esto.
+5. F7: pantalla por monitor (multi-ventana) — pendiente, plan en
+   `docs/roadmap.md`.
+6. PR de cortesía upstream: LICENSE file en `3dsrecomp` (declara MIT en
+   Cargo.toml pero no lleva el archivo), y los parches de
+   `docs/patches/zakuro/` como serie PR.

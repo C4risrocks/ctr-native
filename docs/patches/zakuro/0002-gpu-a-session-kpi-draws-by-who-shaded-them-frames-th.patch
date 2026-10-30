@@ -1,0 +1,235 @@
+From b40e16d2f2cf30953638b0596a412a81a0af6d4a Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 10:15:42 -0600
+Subject: [PATCH 2/2] =?UTF-8?q?gpu:=20a=20session=20kpi=20=E2=80=94=20draw?=
+ =?UTF-8?q?s=20by=20who=20shaded=20them,=20frames,=20the=20sound=20going?=
+ =?UTF-8?q?=20dry?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+the make or break of the native-total story measured: ALBW 600 frames
+AOT, three runs on Apple M1 Pro — software renderer 471.2 MIPS,
+hardware rasterizer with CPU vertex shading 2409.1 MIPS (1.12s),
+hardware with GPU shading 357.0 MIPS (7.53s, gpu 6.3s): the fork's
+default of CPU shading on integrated devices stands measured.
+
+rasterize counts the two buckets (the re-walk hands its count over);
+the app totals frames, the slowest half-second window and the underruns
+all told, and logs one session kpi line as it exits; headless prints
+the buckets as it reports.
+---
+ crates/zakuro-gpu/src/lib.rs    |  1 +
+ crates/zakuro-gpu/src/raster.rs | 11 ++++++-
+ crates/zakuro-gpu/src/stats.rs  | 49 +++++++++++++++++++++++++++++
+ crates/zakuro/src/lib.rs        | 55 +++++++++++++++++++++++++++++++--
+ 4 files changed, 112 insertions(+), 4 deletions(-)
+ create mode 100644 crates/zakuro-gpu/src/stats.rs
+
+diff --git a/crates/zakuro-gpu/src/lib.rs b/crates/zakuro-gpu/src/lib.rs
+index f294442..1466e3a 100644
+--- a/crates/zakuro-gpu/src/lib.rs
++++ b/crates/zakuro-gpu/src/lib.rs
+@@ -16,6 +16,7 @@ pub mod registers;
+ pub mod renderer;
+ pub mod shader;
+ pub mod state;
++pub mod stats;
+ pub mod tev;
+ pub mod texture;
+ 
+diff --git a/crates/zakuro-gpu/src/raster.rs b/crates/zakuro-gpu/src/raster.rs
+index 2e71e86..9d8b131 100644
+--- a/crates/zakuro-gpu/src/raster.rs
++++ b/crates/zakuro-gpu/src/raster.rs
+@@ -3260,7 +3260,10 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
+             let triangles = (indices.len() / 3) as u32;
+             resources.triangles = assembled;
+             match drawn {
+-                Ok(()) => return Some(triangles),
++                Ok(()) => {
++                    crate::stats::shaded_gpu();
++                    return Some(triangles);
++                }
+                 Err(error) => log::error!("the GPU could not shade, {error}, shading on the CPU"),
+             }
+         }
+@@ -3283,6 +3286,9 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
+         #[cfg(feature = "vulkan")]
+         Vertices::Raw { .. } => return None,
+     };
++    // whichever arm it was, its vertices shaded on the CPU: the scout's
++    // batches as well, and the raw ones the CPU decodes later count then
++    crate::stats::shaded_cpu();
+     let (placed, indices) = (&placement.placed, &placement.indices);
+     let (triangle_count, clipped_away, culled) = (placement.triangles, placement.clipped_away, placement.culled);
+     let mut stats = FillStats::default();
+@@ -3315,6 +3321,9 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
+             // which of the vertices made each vertex of the draw is
+             let at = |i: usize| order.map_or(i, |order| order[i]);
+             let in_order: Vec<Vertex> = (0..order.map_or(shaded.len(), <[usize]>::len)).map(|i| shaded[at(i)]).collect();
++            // one cpu shading counted above hands over to the re-walk, so
++            // the draw counts once
++            crate::stats::shaded_cpu_hands_over();
+             let drawn = rasterize(registers, memory, resources, Vertices::Shaded(&in_order));
+             resources.hardware = hardware;
+             return drawn;
+diff --git a/crates/zakuro-gpu/src/stats.rs b/crates/zakuro-gpu/src/stats.rs
+new file mode 100644
+index 0000000..7f9a3d2
+--- /dev/null
++++ b/crates/zakuro-gpu/src/stats.rs
+@@ -0,0 +1,49 @@
++//! what drew, for the kpi: draw calls by whose vertex shader ran on the
++//! host GPU against ones the CPU shaded first, and the frames shown. the
++//! runtime logs a session kpi line with these when it says good-bye, which
++//! the log file keeps for the docs' kpi table.
++
++use std::sync::atomic::{AtomicU64, Ordering};
++
++static SHADED_GPU: AtomicU64 = AtomicU64::new(0);
++static SHADED_CPU: AtomicU64 = AtomicU64::new(0);
++
++/// a draw call whose vertex shader ran on the host GPU.
++pub fn shaded_gpu() {
++    SHADED_GPU.fetch_add(1, Ordering::Relaxed);
++}
++
++/// a draw call the CPU shaded before raster went at it: the software
++/// renderer's draws as well, and those of a GPU that does not shade.
++pub fn shaded_cpu() {
++    SHADED_CPU.fetch_add(1, Ordering::Relaxed);
++}
++
++/// one cpu shading counted above hands over to the re-walk, which counts
++/// it again: the draw with flushed textures counts once, not twice.
++pub fn shaded_cpu_hands_over() {
++    SHADED_CPU.fetch_sub(1, Ordering::Relaxed);
++}
++
++/// (draws the GPU shaded, draws the CPU shaded, per cent of them on the
++/// GPU, none when no draw reached a rasterizer).
++pub fn geometry() -> (u64, u64, Option<u64>) {
++    let gpu = SHADED_GPU.load(Ordering::Relaxed);
++    let cpu = SHADED_CPU.load(Ordering::Relaxed);
++    let total = gpu + cpu;
++    (gpu, cpu, (total > 0).then(|| gpu * 100 / total))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn per_cent_of_shaded_draws() {
++        assert_eq!(geometry().2, None);
++        shaded_gpu();
++        assert_eq!(geometry(), (1, 0, Some(100)));
++        shaded_cpu();
++        assert_eq!(geometry(), (1, 1, Some(50)));
++    }
++}
+diff --git a/crates/zakuro/src/lib.rs b/crates/zakuro/src/lib.rs
+index 6cf00db..f4f502a 100644
+--- a/crates/zakuro/src/lib.rs
++++ b/crates/zakuro/src/lib.rs
+@@ -311,6 +311,8 @@ fn run_headless(system: &mut System, frames: u64) {
+         system.cpu.cycles as f64 / elapsed.as_secs_f64() / 1e6,
+         system.status_line()
+     );
++    let (shade_gpu, shade_cpu, per_cent) = zakuro_gpu::stats::geometry();
++    println!("draws gpu-shaded {shade_gpu}, cpu-shaded {shade_cpu} ({}% of them on the GPU)", per_cent.unwrap_or(0));
+     if !system.fatal_errors.is_empty() {
+         println!("fatal errors: {}", system.fatal_errors.join("; "));
+     }
+@@ -335,6 +337,14 @@ struct Running {
+     frames: u32,
+     counting_since: Instant,
+     fps: f32,
++    /// the session's kpi facts: when the game began, frames emulated since
++    /// then, the slowest half-second window that ran frames (windows a
++    /// pause stretches do not vote), and the sound queue running dry all
++    /// told.
++    started: Instant,
++    total_frames: u64,
++    min_fps: f32,
++    underruns_total: u64,
+ }
+ 
+ impl Running {
+@@ -349,14 +359,25 @@ impl Running {
+             frames: 0,
+             counting_since: Instant::now(),
+             fps: 0.0,
++            started: Instant::now(),
++            total_frames: 0,
++            min_fps: 0.0,
++            underruns_total: 0,
+         }
+     }
+ 
+     fn count_frame(&mut self) {
++        self.total_frames += 1;
+         self.frames += 1;
+         let elapsed = self.counting_since.elapsed();
+         if elapsed >= Duration::from_millis(500) {
+-            self.fps = self.frames as f32 / elapsed.as_secs_f32();
++            let pace = self.frames as f32 / elapsed.as_secs_f32();
++            self.fps = pace;
++            // a stretched window (the game paused mid one) keeps a fast
++            // pace from counting as the slowest
++            if elapsed < Duration::from_secs(2) && pace > 0.0 && (self.min_fps == 0.0 || pace < self.min_fps) {
++                self.min_fps = pace;
++            }
+             self.frames = 0;
+             self.counting_since = Instant::now();
+         }
+@@ -589,6 +610,29 @@ impl ApplicationHandler for App {
+             window.request_redraw();
+         }
+     }
++
++    /// the session's one kpi line, for the log file and thereby the docs'
++    /// table: frames run, their pace, the sound going dry and the draw
++    /// calls by who shaded them.
++    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
++        if let Some(game) = &self.game {
++            let seconds = game.started.elapsed().as_secs_f32().max(0.01);
++            let per_min = || game.underruns_total as f32 / (seconds / 60.0).max(0.001);
++            let (shade_gpu, shade_cpu, per_cent) = zakuro_gpu::stats::geometry();
++            log::info!(
++                "session kpi: {} frames emulated in {:.0}s, avg {:.1} fps, min {:.1} fps, sound ran dry {} ({:.2}/min), draws {}% gpu-shaded ({} gpu, {} cpu)",
++                game.total_frames,
++                seconds,
++                game.total_frames as f32 / seconds,
++                game.min_fps,
++                game.underruns_total,
++                per_min(),
++                per_cent.unwrap_or(0),
++                shade_gpu,
++                shade_cpu,
++            );
++        }
++    }
+ }
+ 
+ impl App {
+@@ -1290,8 +1334,13 @@ impl App {
+                 window.set_title(&title);
+             }
+             let underruns = self.audio.as_ref().map_or(0, |audio| audio.take_underruns());
+-            if underruns > 0 && playing {
+-                log::warn!("the sound ran dry {underruns} times, the emulation is falling behind");
++            if underruns > 0 {
++                if let Some(game) = &mut self.game {
++                    game.underruns_total += underruns as u64;
++                }
++                if playing {
++                    log::warn!("the sound ran dry {underruns} times, the emulation is falling behind");
++                }
+             }
+         }
+ 
+-- 
+2.56.0
+
