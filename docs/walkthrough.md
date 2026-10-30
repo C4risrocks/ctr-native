@@ -80,15 +80,37 @@ arranques; déjalo estar.
 
 ## 4. Pantallas y monitores
 
-Hoy (F6): **una ventana** con las dos pantallas 3DS compuestas dentro, con las
-5 disposiciones de arriba (F9/F10/Esc). La ventana se coloca en el monitor que
-elijas (arrástrala o pásala fullscreen con F11 en el monitor que quieras).
+Hoy el port trae **los dos**: el de la ventana única de siempre y el de la
+segunda ventana por monitor (F7).
 
-En camino (F7): separar las dos pantallas en hasta 2 ventanas — una por
-monitor — configurable desde el menú Esc y por `--split`/`--monitor-top/bottom`
-(se documenta al cerrar la fase, ver `docs/roadmap.md`). Entre tanto, arrancar
-dos veces el emulador NO es una solución real: las dos ejecuciones divergen
-según se avanza; no es el mismo juego.
+**Ventana única** — las dos pantallas 3DS compuestas dentro, con 5
+disposiciones (F9/F10). F11 fullscreen del monitor actual.
+
+**Segunda ventana** (el modo multi-monitor, F7): menú Esc → Settings →
+
+| Setting | Qué elige |
+|---|---|
+| `Second window` | `Off, one window` · `The bottom screen alone` (la del touch) · `The top screen alone` |
+| `Second window's monitor` | el monitor después del de la main, o cualquiera de la lista de escritorio (nombres reales del sistema) |
+
+El cambio se aplica **al instante** (se abre/mueve/cierra sin reiniciar el
+juego) y **queda recordado** en el settings.toml de la sandbox por juego.
+Detalles:
+
+- F11 va fullscreen **ambas** ventanas a la vez.
+- La ventana complementaria maneja el touch de la pantalla que muestra: los
+  clics en la bottom de la companion llegan al juego con la misma matemática
+  de coloca-pantalla que la main.
+- El teclado sigue llegando desde la main; la companion sólo resizes y
+  cierres.
+- Cerrar la companion deja la partida como estaba: la main vuelve con todas
+  las pantallas.
+- Por línea de comandos (solo para la corrida actual): `--split on|off` y
+  `--monitor-bottom <n>` (orden del escritorio, 0 primero); `--split-spike`
+  es el alias antiguo de `--split on`.
+
+⚠️ El truco de arrancar dos veces el emulador **no** es el mismo modo: son
+dos ejecuciones divergentes del juego.
 
 ## 5. Cuando algo falla
 
