@@ -1,0 +1,46 @@
+From fcd3a8ac519ba7f0e4dbc4ef98e196328fe4bf8f Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 16:14:38 -0600
+Subject: [PATCH] app: F11 goes borderless on both windows at once, and the
+ settings reach the companion
+
+toggling full screen borderless' the main window and the companion
+together, and apply_layout gives the bottom screen's window the same
+shape, filter and 3D the settings say, its one screen all the same.
+---
+ crates/zakuro/src/lib.rs | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/crates/zakuro/src/lib.rs b/crates/zakuro/src/lib.rs
+index 27cb6d8..1343f07 100644
+--- a/crates/zakuro/src/lib.rs
++++ b/crates/zakuro/src/lib.rs
+@@ -998,6 +998,11 @@ impl App {
+             if full && self.resize_after_full_screen && !self.maximized_before_full_screen {
+                 let _ = window.request_inner_size(self.window_size());
+             }
++            // the run of windows goes borderless together, neither screen
++            // left drowning in the desktop while the other shows the game
++            if let Some(window) = &self.companion {
++                window.set_fullscreen((!full).then_some(Fullscreen::Borderless(None)));
++            }
+         }
+     }
+ 
+@@ -1061,6 +1066,13 @@ impl App {
+             backend.set_scaling(self.settings.filter.screens(), self.settings.integer_scale);
+             backend.set_stereo(self.settings.stereo());
+         }
++        // the companion keeps its one screen all the same, though the
++        // shape, the filter and the 3D still reach it
++        if let Some(backend) = self.companion_backend.as_mut() {
++            backend.set_top_width(self.settings.top_shape.width());
++            backend.set_scaling(self.settings.filter.screens(), self.settings.integer_scale);
++            backend.set_stereo(self.settings.stereo());
++        }
+         let scale = if self.options.scale.is_none() { self.settings.scale.max(1) } else { self.scale };
+         if scale != self.scale || self.settings.layout != self.layout || self.settings.top_shape != self.top_shape {
+             self.scale = scale;
+-- 
+2.56.0
+
