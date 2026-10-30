@@ -7,13 +7,14 @@ The generated bundle (mirroring nxnative's `pack_app.py`):
       Info.plist                 CFBundleName from the SMDH title, icon, id, versions
       ctr-native                 the double-clickable launcher (a tiny script)
       Resources/AppIcon.icns     the SMDH icon, through macOS's own sips + iconutil
-      Resources/ctr-native/      overlay records: config snapshot, profile hash
-      Contents/MacOS/sandbox/    Azahar's user directory for this game. Azahar uses
-                                 a `user/` folder inside its working directory
-                                 (`SetUserDirectory`, file_util.cpp), so the
-                                 launcher drops the cwd into `sandbox/`: config,
-                                 nand, sdmc, cache and log all live here — saves
-                                 included, isolated per game.
+      Resources/game/            the AOT library (zakuro host), self-contained
+      Contents/MacOS/zakuro-host the host binary itself, for the zakuro host
+
+    <name>.app.ctr-native/       the data sandbox (a SIBLING folder: a codesign
+                                 seal over Contents/ refuses the sandbox's
+                                 databases, so data beside the app is the
+                                 industry pattern): settings, saves, mods,
+                                 shader caches and logs, isolated per game.
 
 Reusing a build: `ctr-native.key` records the packed inputs (ROM hash, Azahar
 binary stamp, profile hash, icon hash); while it matches and the bundle exists,
@@ -26,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import plistlib
+import shutil
 import subprocess  # codesign/iconutil/sips: macOS tools, fixed paths, no shell
 import time
 import zlib
@@ -36,7 +38,6 @@ from collections.abc import Callable
 
 LAUNCHER_NAME = "ctr-native"
 KEY_NAME = "ctr-native.key"
-SANDBOX_REL = Path("MacOS/sandbox")
 ICON_SIZES = (16, 32, 64, 128, 256, 512)
 
 
@@ -50,16 +51,20 @@ def contents_of(app: Path) -> Path:
     return app / "Contents"
 
 
-def sandbox_of(app: Path) -> dict[str, Path]:
-    """Where this game's data lives. On macOS Azahar resolves every user path
-    under $HOME (`LaunchQtFrontend` chdirs to its own bundle, so a cwd-side
-    `user/` is unreachable — the portable-user path is Linux-only), so the
-    launcher runs Azahar with HOME pointed inside the bundle: everything
-    (config, nand, sdmc, cache, log) lands under `sandbox/home/Library/...`
-    and never touches your global Azahar configuration."""
-    sandbox = contents_of(app) / SANDBOX_REL
+def sandbox_of(app: Path, host: str = "azahar") -> dict[str, Path]:
+    """Where this game's data lives: a sibling folder of the app, never inside
+    it. Inside `Contents/` both hosts resolve their paths under $HOME
+    (`LaunchQtFrontend` chdirs to its own bundle; Zakuro picks macOS
+    conventions), but a codesign seal over `Contents/` refuses the sandbox's
+    databases, and the industry pattern is data beside the app: the bundle
+    holds code only, the sandbox holds settings, saves, mods and logs.
+    The launcher runs each host with HOME pointed at the sandbox: everything
+    lands under `sandbox/home/Library/...` and never touches your global
+    configuration."""
+    sandbox = app.with_name(app.name + ".ctr-native")
+    host_name = "Azahar" if host == "azahar" else "zakuro"
     home = sandbox / "home"
-    app_data = home / "Library/Application Support/Azahar"
+    app_data = home / "Library/Application Support" / host_name
     return {
         "sandbox": sandbox,
         "home": home,
@@ -67,14 +72,15 @@ def sandbox_of(app: Path) -> dict[str, Path]:
         "config": app_data / "config",
         "nand": app_data / "nand",
         "sdmc": app_data / "sdmc",
-        "log": app_data / "log",
+        "log": app_data if host == "zakuro" else app_data / "log",
         "cache": app_data / "cache",
     }
 
 
-def ensure_sandbox(app: Path) -> None:
-    for path in sandbox_of(app).values():
-        path.mkdir(parents=True, exist_ok=True)
+def ensure_sandbox(app: Path, host: str = "azahar") -> None:
+    for path in sandbox_of(app, host).values():
+        if path.name != "zakuro.log":  # the log is a file, its folder is the data root
+            path.mkdir(parents=True, exist_ok=True)
 
 
 def write_atomic(path: Path, payload: bytes) -> None:
@@ -95,29 +101,47 @@ def stage_file(path: Path, payload: bytes, only_changed: bool = True) -> bool:
 
 # content builders -----------------------------------------------------------
 
-def launcher_text(azahar_bin: Path, rom_path: Path, sandbox_dir: Path,
-                  language: str, tool_version: str) -> str:
-    """The launcher script: one cd, then exec — every path absolute by design.
+def launcher_text(host_bin: Path, rom_path: Path, sandbox_dir: Path,
+                  language: str, tool_version: str, host: str = "azahar",
+                  recompiled_dylib: Path | None = None,
+                  scale: int | None = None) -> str:
+    """The launcher script: baked absolute paths, then exec.
 
     `open` (and Finder) may hand the launcher a relative argv[0]; a cwd-side
-    sandbox would then silently land Azahar in its *global* configuration
+    sandbox would silently land the host in its *global* configuration
     instead of this app's own. nxnative bakes paths the same way: a moved
     bundle rebuilds, the game's data does not follow it.
+
+    The zakuro host (native Rust runtime, AOT): bundled binary + the game's
+    recompiled library + `--data`/`HOME` inside the bundle; Vulkan through the
+    brew Vulkan loader, whose friend MoltenVK ships its own ICD.
+    The azahar host: `-f ROM`.
     """
     def quote(value: Any) -> str:
         return "'" + str(value).replace("'", "'\\''") + "'"
 
-    return "\n".join([
+    header = [
         "#!/bin/bash",
         "# Generated by ctr-native — do not edit; rebuild instead.",
-        f"# language: {language} · toolkit: {tool_version}",
-        f"AZAHAR={quote(azahar_bin)}",
+        f"# host: {host} · language: {language} · toolkit: {tool_version}",
+        f"HOST_BIN={quote(host_bin)}",
         f"ROM={quote(rom_path)}",
         f"HOME={quote(sandbox_dir / 'home')}",
         'mkdir -p "$HOME"',
-        'exec "$AZAHAR" -f "$ROM"',
-        "",
-    ])
+    ]
+    if host == "zakuro":
+        scale_arg = (" --scale " + str(scale)) if scale else ""
+        lines = [*header,
+            'DYLD_LIBRARY_PATH="/opt/homebrew/lib'
+            '${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"',
+            "export DYLD_LIBRARY_PATH",
+            f'RECOMPILED={quote(recompiled_dylib)}',
+            'exec "$HOST_BIN" --recompiled "$RECOMPILED"'
+            f"{scale_arg} \"$ROM\"",
+        ]
+    else:
+        lines = [*header, 'exec "$HOST_BIN" -f "$ROM"']
+    return "\n".join([*lines, ""])
 
 
 def info_plist(app_name: str, bundle_id: str, version: str) -> bytes:
@@ -247,9 +271,24 @@ def resample(source: Path, size: int, target: Path) -> bool:
 
 # signing --------------------------------------------------------------------
 
+def sign_executable(path: Path, identity: str = "-") -> None:
+    """Ad-hoc sign one Mach-O (the AMFI requirement for pinned executables).
+
+    Non-recursive on purpose: `codesign --deep` would walk the bundle and hit
+    the sandbox's save databases, so each embedded executable gets signed on
+    its own and the bundle seal signs only the launcher.
+    """
+    result = subprocess.run(
+        ["/usr/bin/codesign", "--force", "--sign", identity, str(path)],
+        capture_output=True, text=True,
+    )
+    if result.returncode:
+        raise PackError(f"codesigning {path.name} failed: {result.stderr.strip()}")
+
+
 def codesign(app: Path, identity: str = "-", say: Callable[[str], None] | None = None) -> None:
-    """Ad-hoc sign (or Developer ID with --mac-sign) so a double-click just works."""
-    cmd = ["/usr/bin/codesign", "--force", "--deep", "--sign", identity, str(app)]
+    """Sign the bundle seal (launcher + Info.plist + resources) non-recursively."""
+    cmd = ["/usr/bin/codesign", "--force", "--sign", identity, str(app)]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode:
         raise PackError(f"codesign failed: {result.stderr.strip()}")
@@ -265,16 +304,23 @@ class PackInputs:
 
     rom_path: Path
     whom: Path  # the bundle being packed (sandbox paths are part of its signature)
-    azahar_bin: Path
+    azahar_bin: Path  # the host binary under the Azahar host; a placeholder otherwise
     azahar_version: str
     toolkit_version: str
     profile_hash: str
     icon_png: bytes | None
     launcher_args: list[str]  # extra argv for the launcher (e.g. env-style config)
+    host: str = "azahar"  # azahar | zakuro
+    extra_files: list[tuple[Path, Path]] | None = None  # (source, target inside bundle)
+    zakuro_bin: Path | None = None  # the zakuro binary path for the launcher
+    recompiled_dylib: Path | None = None  # 3dsrecomp's per-game library (aot)
+    scale: int | None = None  # zakuro's --scale (window factor)
+    host_bin_launcher: Path | None = None  # the BUNDLED host copy the launcher execs
+    recompiled_dylib_launcher: Path | None = None  # the BUNDLED library copy
 
     @property
     def sandbox_dir(self) -> Path:
-        return self.whom / SANDBOX_REL
+        return sandbox_of(self.whom, self.host)["sandbox"]
 
 
 def pack(
@@ -300,14 +346,39 @@ def pack(
         return True
     started = time.monotonic()
 
-    ensure_sandbox(app)
+    legacy = contents_of(app) / "MacOS" / "sandbox"
+    if legacy.exists():
+        moved = sandbox_of(app, inputs.host)["sandbox"]
+        moved.mkdir(parents=True, exist_ok=True)
+        for source_dir in list(legacy.iterdir()):
+            destination = moved / source_dir.name
+            destination.mkdir(parents=True, exist_ok=True)
+            for entry in source_dir.rglob("*"):
+                destination_dir = destination / entry.relative_to(source_dir)
+                if entry.is_dir():
+                    destination_dir.mkdir(parents=True, exist_ok=True)
+            for file in [entry for entry in source_dir.rglob("*") if entry.is_file()]:
+                destination_file = destination / file.relative_to(source_dir)
+                destination_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(file, destination_file)
+        shutil.rmtree(legacy)
+    ensure_sandbox(app, inputs.host)
+    extra: list[tuple[Path, Path]] = list(inputs.extra_files or [])
+    for source, target in extra:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        (target).chmod(0o755) if source.suffix in {".dylib", ""} or source.name in ("zakuro", "ctr-native") else None
     icon_file: Path | None = None
     if icon_pixels:
         iconset = IconSet(resources / "ctr-native" / "iconset")
         icon_file = iconset.refresh(icon_pixels, icon_size[0], icon_size[1])
 
+    launch_bin = inputs.host_bin_launcher or inputs.azahar_bin
+    launch_dylib = inputs.recompiled_dylib_launcher or inputs.recompiled_dylib
     write_atomic(macos / LAUNCHER_NAME, launcher_text(
-        inputs.azahar_bin, inputs.rom_path, sandbox_of(app)["sandbox"], language, inputs.toolkit_version,
+        launch_bin, inputs.rom_path, sandbox_of(app, inputs.host)["sandbox"],
+        language, inputs.toolkit_version, inputs.host,
+        launch_dylib,
     ).encode())
     (macos / LAUNCHER_NAME).chmod(0o755)
     write_atomic(contents / "Info.plist", info_plist(app_name, app_bundle_id(title_id), version))
@@ -327,20 +398,31 @@ def pack(
             f"icon\t{'yes' if icon_pixels else 'SMDH-missing'}",
         ]).encode())
 
+    for _source, target in extra:
+        if target.suffix in {".dylib"} or target.name.endswith("-host"):
+            sign_executable(target, sign_identity)
     codesign(app, sign_identity, say=say)
     say(f"app packed in {int(time.monotonic() - started)}s: {app}")
     return False
 
 
 def pack_inputs_hash(inputs: PackInputs, icon_pixels: list[tuple[int, int, int, int]] | None) -> str:
+    host_bin = inputs.zakuro_bin if inputs.host == "zakuro" and inputs.zakuro_bin else inputs.azahar_bin
+    launch_bin = inputs.host_bin_launcher or inputs.azahar_bin
     return schema_hash({
         "rom": hash_file(inputs.rom_path),
-        "azahar": file_stamp(inputs.azahar_bin),
+        "host": inputs.host,
+        "host_bin": file_stamp(host_bin),
         "profile": inputs.profile_hash,
         "toolkit": inputs.toolkit_version,
         "launcher": schema_hash({
-            "text": launcher_text(inputs.azahar_bin, inputs.rom_path,
-                                  inputs.sandbox_dir, "en", inputs.toolkit_version),
+            "text": launcher_text(launch_bin, inputs.rom_path,
+                                  inputs.sandbox_dir, "en", inputs.toolkit_version,
+                                  inputs.host, inputs.recompiled_dylib_launcher, None),
+        }),
+        "extra_files": schema_hash({
+            f"{source.name}@{file_stamp(source)}": str(target)
+            for source, target in (inputs.extra_files or [])
         }),
         "launcher_args": schema_hash({str(index): value for index, value in enumerate(inputs.launcher_args)}),
         "icon": "none" if icon_pixels is None else "present",

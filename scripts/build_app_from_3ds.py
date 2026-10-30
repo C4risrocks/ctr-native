@@ -104,6 +104,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("game", help="a game folder (card images and/or CIAs) or one file")
     parser.add_argument("-o", "--output", default=None, help="where the .app lands")
+    parser.add_argument("--host", default="zakuro", choices=("zakuro", "azahar"),
+                        help="the HLE host the app runs on (default: zakuro, the native Rust one)")
+    parser.add_argument("--zakuro-bin", default=None, type=Path,
+                        help="path to the zakuro binary (default: vendors/zakuro/target/release/zakuro)")
+
     parser.add_argument("--azahar-app", default="/Applications/Azahar.app", type=Path)
     parser.add_argument("--app-name", default=None)
     parser.add_argument("--language", default="en", choices=sorted(LANGUAGE_REGION))
@@ -305,23 +310,65 @@ def pack_stage(build: Build, state: progress_module.StageState, progress: progre
     app_name = app_name.replace("\n", " - ").strip()
     app_path = app_output_dir / f"{app_name}.app"
 
-    azahar_bin = Path(args.azahar_app).expanduser() / "Contents/MacOS/azahar"
-    if not azahar_bin.exists():
-        raise BuildFailed(
-            f"Azahar is missing at {azahar_bin}:\n"
-            "  install the macos-arm64 release you prefer, or pass --azahar-app <path>"
-        )
+    if args.host == "zakuro":
+        # the native Rust host: its binary was built in vendors/, its AOT
+        # library came from 3dsrecomp build; both land INSIDE the bundle so
+        # the app stays self-contained
+        zakuro_bin = args.zakuro_bin or (ROOT / "vendors/zakuro/target/release/zakuro")
+        if not zakuro_bin.exists():
+            raise BuildFailed(
+                f"the zakuro host is missing at {zakuro_bin}:\n"
+                "  build it once: cd vendors/zakuro && cargo build --release --locked --workspace 2>&1 | tail -1\n"
+                "  (or pass --host azahar for the published emulator)"
+            )
+        recompiled_dylib = Path.home() / "Library/Application Support/3dsrecomp" / f"{build.title_id}.dylib"
+        if not recompiled_dylib.exists():
+            raise BuildFailed(
+                f"the AOT library for {build.title_id} is missing at {recompiled_dylib}:\n"
+                "  build it once (about ten minutes):\n"
+                "    cd vendors/3dsrecomp && cargo build --release && ./target/release/3dsrecomp build <the rom>\n"
+                "  (or pass --host azahar)"
+            )
+        host_bin_for_inputs = zakuro_bin  # stamps the SOURCE; the launcher stays self-contained
+        extra_files = [
+            (zakuro_bin, app_path / "Contents/MacOS/zakuro-host"),
+            (recompiled_dylib, app_path / "Contents/Resources/game" / f"{build.title_id}.dylib"),
+        ]
+        host_version = file_stamp(zakuro_bin)
+    else:
+        zakuro_bin = None
+        recompiled_dylib = None
+        extra_files = []
+        host_bin_for_inputs = Path(args.azahar_app).expanduser() / "Contents/MacOS/azahar"
+        if not host_bin_for_inputs.exists():
+            raise BuildFailed(
+                f"Azahar is missing at {host_bin_for_inputs}:\n"
+                "  install the macos-arm64 release you prefer, or pass --azahar-app <path>"
+            )
+        host_version = azahar_version(host_bin_for_inputs)
+        zakuro_bin = None
+        recompiled_dylib = None
 
     inputs = pack_app.PackInputs(
         rom_path=rom_for_app,
         whom=app_path,
-        azahar_bin=azahar_bin,
-        azahar_version=azahar_version(azahar_bin),
+        azahar_bin=host_bin_for_inputs,
+        azahar_version=host_version,
         toolkit_version=TOOLKIT_VERSION,
         profile_hash=pack_app.schema_hash({**profile_values, "_md5pin": build.profile.verified_md5}),
         icon_png=None,
         launcher_args=[],
+        host=args.host,
+        extra_files=extra_files,
+        zakuro_bin=zakuro_bin,
+        recompiled_dylib=recompiled_dylib,
+        scale=3 if args.host == "zakuro" else None,
     )
+    if args.host == "zakuro":
+        # the launcher binds the bundle's own copies: self-contained; the
+        # stamps above stay on the SOURCE binaries (the copy happens in pack)
+        inputs.host_bin_launcher = app_path / "Contents/MacOS/zakuro-host"
+        inputs.recompiled_dylib_launcher = app_path / "Contents/Resources/game" / f"{build.title_id}.dylib"
     reused = pack_app.pack(
         app=app_path,
         app_name=app_name,
@@ -334,15 +381,19 @@ def pack_stage(build: Build, state: progress_module.StageState, progress: progre
         say=lambda message: progress.step(state, message),
     )
     # The sandbox is the app's user directory: its config lands there once,
-    # the first time, and later builds never touch it (saves inside).
-    sandbox = pack_app.sandbox_of(app_path)
-    config_path = sandbox["config"] / "qt-config.ini"
-    if reused and config_path.exists():
-        progress.stage_end(state, f"config reused ({len(profile_values)} keys)")
+    # the first time, and later builds never touch it (saves inside). Zakuro
+    # keeps its own settings.toml in the same root; nothing prewritten today.
+    sandbox = pack_app.sandbox_of(app_path, args.host)
+    if args.host == "zakuro":
+        progress.stage_end(state, f"sandbox ready ({'reused' if reused else 'fresh'}) · host zakuro")
     else:
-        pack_app.ensure_sandbox(app_path)
-        pack_app.write_atomic(config_path, config_text.encode())
-        progress.stage_end(state, f"config written ({len(profile_values)} keys)")
+        config_path = sandbox["config"] / "qt-config.ini"
+        if reused and config_path.exists():
+            progress.stage_end(state, f"config reused ({len(profile_values)} keys)")
+        else:
+            pack_app.ensure_sandbox(app_path, args.host)
+            pack_app.write_atomic(config_path, config_text.encode())
+            progress.stage_end(state, f"config written ({len(profile_values)} keys)")
     # A record of what got packed, next to the logs.
     (build.logs / "pack.tsv").write_text(
         "\n".join([
@@ -384,22 +435,57 @@ def file_stamp(path: Path) -> str:
 
 def launch_stage(app: Path, state: progress_module.StageState,
                  progress: progress_module.Progress, args: argparse.Namespace) -> None:
-    """A 5-second smoke: the app process starts and its sandbox log appears."""
+    """A smoke run of the packed app: windowless headless for the zakuro host."""
     if not args.launch:
         progress.stage_end(state, "not launched (pass --launch to open it)")
         return
+    import os as _os
+    import shlex
     import subprocess
-    import time as _time
 
+    launcher_text_file = (app / "Contents/MacOS/ctr-native").read_text()
+    host_is_zakuro = "zakuro-host" in launcher_text_file
+    rom = None
+    for line_text in launcher_text_file.splitlines():
+        if line_text.startswith("ROM="):
+            rom = Path(shlex.split(line_text.replace("ROM=", "ROM ", 1))[1])
+            break
+    if rom is None:
+        raise BuildFailed("the launcher carries no ROM path")
+
+    if host_is_zakuro:
+        env = dict(_os.environ)
+        env["HOME"] = str(pack_app.sandbox_of(app, "zakuro")["home"])
+        env["DYLD_LIBRARY_PATH"] = "/opt/homebrew/lib"
+        zakuro_bin = app / "Contents/MacOS/zakuro-host"
+        headless_run = subprocess.run(
+            [str(zakuro_bin), "--headless", "120", "--mute", "--recompiled",
+             str(rom_dylib_path(app)), str(rom)],
+            env=env, capture_output=True, text=True, timeout=180,
+        )
+        output = headless_run.stdout + headless_run.stderr
+        progress.count(state, 1, 1, "smoke")
+        if "Completed after" in output:
+            speed_note = output.strip().splitlines()[-2].strip() if len(output.splitlines()) > 1 else ""
+            progress.stage_end(state, f"headless smoke passed · host zakuro ({speed_note[:60]})")
+            return
+        raise BuildFailed(f"headless smoke failed:\n{output[-800:]}")
+
+    # the azahar host: a real (windowed) launch, log-based smoke
     subprocess.run(["/usr/bin/open", str(app)], check=True)
-    log = pack_app.sandbox_of(app)["log"] / "azahar_log.txt"
+    log = pack_app.sandbox_of(app, "azahar")["log"] / "azahar_log.txt"
     for _ in range(25):
-        _time.sleep(1)
+        time.sleep(1)
         if log.exists() and log.stat().st_size > 0:
             progress.count(state, 1, 1, "smoke")
             progress.stage_end(state, "the app booted; its log is writing")
             return
     progress.stage_end(state, "no log yet — if the window is up, play; the log may be buffered", ok=True)
+
+
+def rom_dylib_path(app: Path) -> Path:
+    """The bundle's own copy of the game's AOT library (self-contained)."""
+    return next(iter((app / "Contents/Resources/game").glob("*.dylib")))
 
 
 if __name__ == "__main__":

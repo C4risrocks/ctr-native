@@ -39,10 +39,15 @@ def main(argv: list[str] | None = None) -> int:
         for interesting in sorted((app / "Contents/Resources/ctr-native").glob("*")):
             if interesting.suffix in TEXT_SUFFIXES:
                 sources.append((interesting, f"pack/{interesting.name}"))
-        log = next(iter(sorted((app / "Contents/MacOS/sandbox").glob(
-            "**/log/azahar_log.txt"))), None)
-        if log:
-            sources.append((log, "sandbox/azahar_log.txt"))
+        # whichever host lives in the launcher, its sandbox is the sibling folder
+        sandbox = app.with_name(app.name + ".ctr-native")
+        if not sandbox.is_dir():
+            sandbox = app / "Contents/MacOS/sandbox"
+        for log_name in ("zakuro.log", "zakuro.previous.log",
+                         "home/Library/Application Support/Azahar/log/azahar_log.txt"):
+            candidate = sandbox / log_name
+            if candidate.exists() and candidate.stat().st_size:
+                sources.append((candidate, f"sandbox/{Path(log_name).name}"))
     build_logs = app.parent / "logs"
     if build_logs.is_dir():
         for log in sorted(build_logs.glob("*.log"))[-5:]:

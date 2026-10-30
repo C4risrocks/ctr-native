@@ -40,6 +40,19 @@ carrier `build_ipa_from_nsp.py`'s layout:
 `frac`/`eta`, `stage_end`, and `say`. Bars otherwise, plain lines behind
 pipes, `off` only stage start/ends.
 
+## Fases zakuro-macOS (Rust AOT host, 2026-10-30)
+
+F0..F2' verificadas: see `docs/zakuro-macos.md` (measured KPIs). El pipeline del packer
+(+`--host zakuro` default) armó el `.app` autocontenido:
+
+    <name>.app/
+      Contents/MacOS/ctr-native   launcher (paths absolutos, HOME -> sandbox hermana)
+      Contents/MacOS/zakuro-host  baklava binario del host runtime Rust
+      Contents/Resources/game/    <title>.dylib + <title>.hints (AOT 3dsrecomp)
+
+Sandbox hermano `<name>.app.ctr-native/`: settings.toml, savedata, mods (Luma/Azahar),
+cheats, shaders y zakuro.log. Los dos hosts coexisten en subcarpetas.
+
 ## Reuse policy
 
 `<id>_build/` keeps: `decrypted/`, `logs/<stage>.log`. The app's signature

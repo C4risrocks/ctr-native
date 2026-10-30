@@ -12,7 +12,7 @@ from *your* dump and holds nothing from any game in this repository.
 | nxnative (Switch) | ctr-native (this repo) |
 | --- | --- |
 | NSP/XCI/NSZ + `prod.keys` | `.3ds`/`.cci`, decrypted or your `boot9` for the encrypted ones |
-| NSO rewriter (already ARM64) | Azahar HLE host (ARMv6 via its translator/JIT — the native one arrives in Fase 2) |
+| NSO rewriter (already ARM64) | **zakuro**: ARM11→C AOT por 3dsrecomp, runtime HLE Rust nativo (`--host zakuro`, default); Azahar queda como `--host azahar` |
 | Horizon HLE host in C | Azahar's CTR HLE, sandboxed per game (`$HOME` redirection) |
 | NVN → Metal, offline shaders | PICA200 → Vulkan/Metal (MoltenVK) with per-game profiles |
 | `build_ipa_from_nsp.py --platform mac-app` | `build_app_from_3ds.py` → `<game>.app` |
@@ -30,9 +30,12 @@ from *your* dump and holds nothing from any game in this repository.
 
        python3 scripts/build_app_from_3ds.py ~/Games/ALBW -o ~/Desktop
 
-   The app lands beside the dump by default. Verified dumps: put the
-   No-Intro MD5 into `dm/games/<title id>/profile.tsv` as `verified_md5=…`
-   and every build re-verifies your copy (~1 s per GiB).
+   The app lands beside the dump by default, **self-contained** (host
+   binary + the game's AOT library inside), data beside it in
+   `<name>.app.ctr-native/`. The zakuro host needs its one-time builds:
+   `cargo build --release` in both `vendors/` repos (see Fase 2') and one
+   `3dsrecomp build <rom>` per game (~4 min). Verified dumps: `verified_md5=…`
+   in the profile re-verifies every build (~1 s per GiB).
 
 4. **Play** by double-clicking the app. It runs fullscreen; F11 toggles,
    Esc exits fullscreen. Saves live inside:

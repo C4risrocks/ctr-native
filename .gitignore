@@ -19,6 +19,9 @@ keys.txt
 # Build products and caches.
 *_build/
 *.app/
+# *.app/ only matches dirs ending in ".app": bundles are named *.app.ctr-native
+# and hold the user sandbox (saves/logs/caches) - never commit them.
+*.app.ctr-native/
 *.app.key
 *.idx
 .DS_Store

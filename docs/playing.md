@@ -13,6 +13,17 @@ A/B = `A`/`S`?? actually Azahar maps by instrument panel label — open the
 app; Azahar includes the mapping screen ("Configure Current Game"). A
 Nintendo-pad or Xbox controller is detected automatically.
 
+## Poznámka: hosts a builds (zakuro por defecto)
+
+El packer genera la app con el **host zakuro** (Rust AOT, `build_app_from_3ds.py --host zakuro`,
+default desde 0.1.0): binario + librería AOT del juego dentro del bundle, datos en
+`<app>.ctr-native/` (hermano del .app). Para el host Azahar clásico: `--host azahar`
+(same sandbox: saves de ambos hosts conviven en subcarpetas distintas sin pisarse).
+
+> Headless smoke: `python3 scripts/build_app_from_3ds.py . --launch` corre
+> `zakuro --headless 120 --mute` windless: validación sin ventana de toda la cadena
+> (bundle + host + AOT + sandbox) en ~3 s antes de abrir el juego.
+
 ## Saves
 
 `<game>.app/Contents/MacOS/sandbox/home/Library/Application Support/Azahar/`
