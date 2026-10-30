@@ -43,13 +43,17 @@ sin reiniciar y persistente por juego (el settings.toml del sandbox hermano).
 | **G2 ✅ hecho (verificación de sesión windowed pendiente)** | Audio: underruns ("sound ran dry") | `zakuro/src/audio.rs` (cpal 0.16) | Context7 `/rustaudio/cpal`: `BufferSize::Fixed` con fallback documentado | Callback pinneado a 2048 frames (CONFIG TARGET 4096 deja profundidad) con fallback al buffer del host + log de qué se llevó; el contador de underruns de G5 mide el antes/después en la próxima sesión windowed | 0 "sound ran dry" en 60 s de ALBW (por medir en sesión real) |
 | **G1 ✅ auditado (medido)** | Shading de vértices por CPU | `raster/hardware.rs::shades()` + ramas en `raster.rs` | El path GPU ya existe y llega al 100% (`ZAKURO_GPU_SHADERS=1`); en M1 Pro corre 6.7× más lento que el CPU shading (357 vs 2409 MIPS en las mismas 600 frames) → **el default del fork es correcto en Apple Silicon** | Se mantiene el default CPU en integradas; se revisita si mejora MoltenVK o tras G4 (Metal-direct) |
 | **G3 ✅ hecho** | `cecd:u` 0x0012 (OpenAndRead, el inbox de StreetPass) | `zakuro-core/src/services/cecd.rs` | 3dbrew confirma la ABI (0x00120104 = OpenAndRead); el box offline lee vacío con success, como el daemon ya piensa ALBW | Test in-crate `the_inbox_reads_empty_offline` en verde + boot real sin WARN cecd; patch `0005-*` |
-| G4 | Vulkan (MoltenVK) vs Metal-direct | `backend/vulkan.rs` | Solo informe go/no-go: **con dato nuevo de costo** — el GPU shading MoltenVK corta 6.7× en M1 Pro; Metal-direct valdría en raster/PSO, no en vértices | Informe corto de coste/valor |
+| **G4 ✅ informe hecho** | Vulkan (MoltenVK) vs Metal-direct | — | Informe go/no-go en `docs/metal-direct.md`: **HOLD** — el cuello no es la traducción de Vulkan (2409 MIPS con CPU-shading); Metal sería rework del raster/PSO, a abrir solo si `session kpi` windowed muestra < 60 fps | Informe entregado |
 
-## Pases de ejecución (commit/push por fase)
+## Pases de ejecución (commit/push por fase) — **todos ejecutados 2026-10-30**
 
-- **Pase 1** — F7-0 → F7-1 → G5 (docs de KPI incluidas) → validación del usuario en la Mac.
-- **Pase 2** — F7-2..F7-5.
-- **Pase 3** — F8: G2 → G1 → G3 → informe G4.
+- **Pase 1 ✅** — F7-0 (spike, `fb83a92`) → F7-1 modelo (`b55352d`) → G5 KPI (`12e136d` antes del refactor).
+- **Pase 2 ✅** — F7-2 settings+CLI (`2d54507`) → F7-3 menú live (`b4c7109`) → F7-3b touch (`5b223a7`) → F7-4 re-pack (`29cd138`) → F7-5 docs (`5a79b74`).
+- **Pase 3 ✅** — G3 cecd (`10d95c7`) → G2 audio (`7448621`) → G4 informe (este commit).
+
+Queda abierto por diseño: la **validación visual del modo dual en Mac con
+dos monitores reales** (por el usuario, cuando quiera) y la medición
+windowed del audio (la `session kpi` lo da sola al cerrar la sesión).
 
 ## Guardas del repo (AGENTS.md)
 
