@@ -1,0 +1,27 @@
+[project]
+name = "ctr-native"
+version = "0.1.0"
+description = "Nintendo 3DS games running natively on macOS as sandboxed per-game .apps: your .3ds/.cci dump and your keys become a double-clickable app with an HLE host"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+readme = "README.md"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes (unused code, undefined names)
+    "B",   # bugbear (likely bugs)
+    "UP",  # pyupgrade
+    "SIM", # simplifications
+    "RUF", # ruf-specific
+]
+# Ratchet policy (like nxnative): never reformat, check only.
+# New findings must be fixed or silenced on their line with a reason;
+# a fixed finding must remove its baseline entry, if it has one.
+
+[tool.pyright]
+typeCheckingMode = "basic"

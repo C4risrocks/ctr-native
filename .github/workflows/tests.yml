@@ -1,0 +1,43 @@
+name: tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  tools-tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: parser and fixture tests (no game files, no console data)
+        run: python3 -m unittest discover -s dm/tests -t . -p "t_*.py" -v
+      - name: ruff (never reformat, ratchet policy)
+        run: |
+          pip install ruff
+          ruff check dm scripts
+
+  pack-smoke:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # A synthetic build with no game and no Azahar: the packer's stages are
+      # exercises on fixtures; the smoke ends before a bundle could exist.
+      - name: synthetic pack inputs
+        run: |
+          python3 - <<'EOF'
+          from dm.tools.pack_app import PackInputs, pack_inputs_hash, app_bundle_id, app_name_from_smdh
+          assert app_bundle_id("00040000000EC300") == "org.ctrnative.00040000000ec300"
+          assert app_name_from_smdh("Name: Sub\n More") != ""
+          print("smoke ok")
+          EOF

@@ -1,0 +1,40 @@
+# Nothing of any game in this repository (files or keys).
+*.3ds
+*.3dz
+*.3dsx
+*.cci
+*.cia
+*.cxi
+*.cfa
+*.xci  # just in case (not a 3DS format, but never pack it)
+*.nsp
+
+# Console keys: your boot9/movable-sed stay on your machine.
+*.bin.keys
+boot9*
+*.otp
+movable.sed
+keys.txt
+
+# Build products and caches.
+*_build/
+*.app/
+*.app.key
+*.idx
+.DS_Store
+._*
+
+# Packaging/library noise.
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.pytype/
+.ruff_cache/
+
+# Editor noise.
+.idea/
+.vscode/
+*.swp

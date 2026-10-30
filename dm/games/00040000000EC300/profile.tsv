@@ -1,0 +1,8 @@
+# Profile of The Legend of Zelda: A Link Between Worlds (USA), CTR-P-BZLE.
+# Values go into the generated qt-config.ini; add games by adding folders here.
+Renderer.resolution_factor=4        # 2DS-era 240p screen -> 960p: crisp, light on M-series
+Renderer.async_shader_compilation=true
+Renderer.use_vsync=true
+Layout.layout_option=0              # top + bottom: ALBW uses both screens constantly
+System.region_value=1               # USA build (En,Fr,Es on the card)
+verified_md5=a7627c2e75c7755964c9c95c8ed7a2ee
