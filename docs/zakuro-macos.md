@@ -68,8 +68,10 @@ Hallazgos medidos (cierran el misterio del "vertices shaded on the CPU"):
 4. Metal-direct (G4): informe go/no-go — ahora con dato de costo: el GPU
    shading vía MoltenVK corta 6.7× (357 MIPS) en M1 Pro, así que el valor de
    un backend Metal directo estaría en el raster/PSO, no en resolver esto.
-5. F7: pantalla por monitor (multi-ventana) — pendiente, plan en
-   `docs/roadmap.md`.
+5. F7 (pantalla por monitor): **hecho y re-empaquetado (F7-0..F7-4)** —
+   settings + panel del menú Settings + CLI (`--split/--monitor-bottom`),
+   touch en la companion, F11 ambas ventanas; validar en Mac con dos
+   monitores queda por la sesión real.
 6. PR de cortesía upstream: LICENSE file en `3dsrecomp` (declara MIT en
    Cargo.toml pero no lleva el archivo), y los parches de
    `docs/patches/zakuro/` como serie PR.
