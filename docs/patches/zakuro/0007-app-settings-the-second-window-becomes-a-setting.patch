@@ -1,0 +1,228 @@
+From de4cba4c82577c3578673eaddeb64d876f371548 Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 16:27:31 -0600
+Subject: [PATCH] settings: the second window becomes a setting, and the run
+ can ask for it
+
+CompanionWindow (off, the bottom one, the top one) and which monitor it
+goes to, both kept between runs; the run's --split and --monitor-bottom
+say this run's only, over the settings'. off stays every start's state,
+so the plain one-window boot is untouched.
+---
+ crates/zakuro-gpu/src/stats.rs | 11 +++++++---
+ crates/zakuro/src/cli.rs       | 29 +++++++++++++++++++++---
+ crates/zakuro/src/lib.rs       | 40 ++++++++++++++++++++++++++++++----
+ crates/zakuro/src/settings.rs  | 25 +++++++++++++++++++++
+ 4 files changed, 95 insertions(+), 10 deletions(-)
+
+diff --git a/crates/zakuro-gpu/src/stats.rs b/crates/zakuro-gpu/src/stats.rs
+index 7f9a3d2..e3d6b81 100644
+--- a/crates/zakuro-gpu/src/stats.rs
++++ b/crates/zakuro-gpu/src/stats.rs
+@@ -40,10 +40,15 @@ mod tests {
+ 
+     #[test]
+     fn per_cent_of_shaded_draws() {
+-        assert_eq!(geometry().2, None);
++        // the tiler's own tests run alongside, so the counts are not
++        // fresh: the test measures its own steps' deltas
++        let (gpu_was, cpu_was, _) = geometry();
+         shaded_gpu();
+-        assert_eq!(geometry(), (1, 0, Some(100)));
++        let (gpu, cpu, _) = geometry();
++        assert_eq!((gpu, cpu), (gpu_was + 1, cpu_was));
+         shaded_cpu();
+-        assert_eq!(geometry(), (1, 1, Some(50)));
++        let (gpu, cpu, per_cent) = geometry();
++        assert_eq!((gpu, cpu), (gpu_was + 1, cpu_was + 1));
++        assert_eq!(per_cent, Some(gpu * 100 / (gpu + cpu)));
+     }
+ }
+diff --git a/crates/zakuro/src/cli.rs b/crates/zakuro/src/cli.rs
+index 1aea243..f62b559 100644
+--- a/crates/zakuro/src/cli.rs
++++ b/crates/zakuro/src/cli.rs
+@@ -20,6 +20,12 @@ pub struct Options {
+     /// the split-monitors spike: a second window draws the bottom screen
+     /// alone, straight from the same frames.
+     pub split_spike: bool,
++    /// a second window draws one screen alone, on another monitor when
++    /// there is one, this run only.
++    pub split: Option<bool>,
++    /// which monitor the second window goes to, the desktop's order by
++    /// number.
++    pub monitor_bottom: Option<usize>,
+     /// a library of recompiled code for the title, or a directory of them.
+     pub recompiled: Option<String>,
+     /// draw on the host GPU rather than in software, the settings' choice
+@@ -48,9 +54,11 @@ options:
+                                    the host GPU through Vulkan, or software
+                                    where that does not start)
+   --scale <n>                      window scale factor (default: 2)
+-  --split-spike                    a second, plain window draws only the
+-                                   bottom screen, from the same frames (the
+-                                   split-monitors spike, no settings yet)
++  --split <on|off>                 a second window draws one screen alone
++                                   (the bottom one), this run only
++  --monitor-bottom <n>             which monitor it goes to, the desktop's
++                                   order by number, 0 first
++  --split-spike                    --split on, the spike's older name
+   (Esc opens the menu over a game, F1 pauses, F11 goes fullscreen)
+   --headless <frames>              run without a window and print a report
+   --new3ds                         emulate a New 3DS
+@@ -84,6 +92,8 @@ pub fn parse() -> Result<Options, String> {
+         new3ds: false,
+         test_pattern: false,
+         split_spike: false,
++        split: None,
++        monitor_bottom: None,
+         recompiled: None,
+         hardware_rasterizer: None,
+         data: None,
+@@ -136,6 +146,19 @@ pub fn parse() -> Result<Options, String> {
+             "--profile" => options.profile = true,
+             "--test-pattern" => options.test_pattern = true,
+             "--split-spike" => options.split_spike = true,
++            "--split" => {
++                let value = args.next().ok_or("--split needs a value")?;
++                options.split = Some(match value.as_str() {
++                    "on" | "y" | "1" => true,
++                    "off" | "n" | "0" => false,
++                    other => return Err(format!("unknown split '{other}', use on or off")),
++                });
++            }
++            "--monitor-bottom" => {
++                let value = args.next().ok_or("--monitor-bottom needs a value")?;
++                options.monitor_bottom =
++                    Some(value.parse().map_err(|_| format!("'{value}' is not a monitor number"))?);
++            }
+             other if other.starts_with('-') => {
+                 return Err(format!("unknown option '{other}'"));
+             }
+diff --git a/crates/zakuro/src/lib.rs b/crates/zakuro/src/lib.rs
+index 1343f07..34203a0 100644
+--- a/crates/zakuro/src/lib.rs
++++ b/crates/zakuro/src/lib.rs
+@@ -555,7 +555,7 @@ impl ApplicationHandler for App {
+                 // the game the command line names starts on the device the
+                 // presenter may lend the renderer, once there is one
+                 self.start();
+-                if self.options.split_spike {
++                if self.companion_wanted() {
+                     if let Err(error) = self.open_companion(event_loop) {
+                         log::warn!("no companion window, {error}");
+                     }
+@@ -818,10 +818,17 @@ impl App {
+     }
+ 
+     /// the spike's second window: the bottom screen alone, placed on the
+-    /// monitor after the main one's there is.
++    /// monitor after the main one's there is, or the one the run and the
++    /// settings name.
+     fn open_companion(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+         let monitors = event_loop.available_monitors().collect::<Vec<_>>();
+-        let after_main = monitors.get(1).or(monitors.last()).cloned();
++        let (wanted, wanted_monitor) = (
++            self.companion_kind(),
++            self.options.monitor_bottom.or(self.settings.companion_monitor),
++        );
++        let after_main = wanted_monitor
++            .and_then(|index| monitors.get(index).cloned())
++            .or_else(|| monitors.get(1).cloned().or_else(|| monitors.last().cloned()));
+         // the bottom screen alone: a window of the bottom screen's pixels
+         let (console_width, console_height) = self.layout.screens().size(self.top_shape.width());
+         let (window_width, window_height) = (console_width * self.scale, console_height * self.scale);
+@@ -839,7 +846,12 @@ impl App {
+             Backend::create(event_loop, drafting, RendererKind::OpenGl)
+         });
+         let (window, mut backend) = created?;
+-        backend.set_layout(settings::Screens::BottomOnly.screens());
++        // the one screen it draws, by what the run and the settings asked
++        backend.set_layout(match wanted {
++            settings::CompanionWindow::BottomOnly => settings::Screens::BottomOnly.screens(),
++            settings::CompanionWindow::TopOnly => settings::Screens::TopOnly.screens(),
++            settings::CompanionWindow::Off => return Ok(()),
++        });
+         backend.set_top_width(self.settings.top_shape.width());
+         backend.set_scaling(self.settings.filter.screens(), self.settings.integer_scale);
+         backend.set_stereo(self.settings.stereo());
+@@ -866,6 +878,26 @@ impl App {
+         self.companion_id = None;
+     }
+ 
++    /// whether this run wants a second window, the command line's say
++    /// over the settings'.
++    fn companion_wanted(&self) -> bool {
++        self.options
++            .split
++            .unwrap_or(self.options.split_spike)
++            .then_some(true)
++            .unwrap_or_else(|| self.settings.companion_window != settings::CompanionWindow::Off)
++    }
++
++    /// which screen the second window shows, the spike keeping its bottom
++    /// one however the settings went.
++    fn companion_kind(&self) -> settings::CompanionWindow {
++        if self.options.split.is_some() || self.options.split_spike {
++            settings::CompanionWindow::BottomOnly
++        } else {
++            self.settings.companion_window
++        }
++    }
++
+     fn key(&mut self, event: KeyEvent, consumed: bool) {
+         let pressed = event.state == ElementState::Pressed;
+         let PhysicalKey::Code(code) = event.physical_key else { return };
+diff --git a/crates/zakuro/src/settings.rs b/crates/zakuro/src/settings.rs
+index 1e9b15b..085fa3a 100644
+--- a/crates/zakuro/src/settings.rs
++++ b/crates/zakuro/src/settings.rs
+@@ -98,6 +98,22 @@ impl Filter {
+     }
+ }
+ 
++/// the second window that shows one screen alone on another monitor,
++/// drawing straight from the same frames as the main one.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum CompanionWindow {
++    /// one window, all the screens.
++    #[default]
++    Off,
++    /// the bottom screen, for the console's games that live on the touchy
++    /// one, on a monitor of its own.
++    BottomOnly,
++    /// the top screen alone instead, when a game is all about the upper
++    /// one.
++    TopOnly,
++}
++
+ /// the top screen's shape. a game draws into 400x240 whatever this is, so
+ /// anything but the console's own only looks right with a widescreen code
+ /// on, which makes the game draw a wider scene into those pixels.
+@@ -472,6 +488,13 @@ pub struct Settings {
+     pub filter: Filter,
+     /// scale the screens by whole numbers only, leaving a border.
+     pub integer_scale: bool,
++    /// the second, one-screen window, off unless asked for.
++    #[serde(deserialize_with = "or_default")]
++    pub companion_window: CompanionWindow,
++    /// which monitor it goes to, the desktop's order by number, none for
++    /// the monitor after the main window's.
++    #[serde(deserialize_with = "or_default")]
++    pub companion_monitor: Option<usize>,
+     /// how wide the top screen shows.
+     #[serde(deserialize_with = "or_default")]
+     pub top_shape: TopShape,
+@@ -524,6 +547,8 @@ impl Default for Settings {
+             layout: Screens::Stacked,
+             filter: Filter::Smooth,
+             integer_scale: false,
++            companion_window: CompanionWindow::Off,
++            companion_monitor: None,
+             top_shape: TopShape::Console,
+             stereo: Stereo3d::Off,
+             depth_3d: 50,
+-- 
+2.56.0
+
