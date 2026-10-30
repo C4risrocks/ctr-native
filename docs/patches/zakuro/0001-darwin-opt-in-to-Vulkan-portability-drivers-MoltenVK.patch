@@ -1,0 +1,119 @@
+From d0b4be644300eb74bada8548ddcf6ee453211104 Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 04:15:49 -0600
+Subject: [PATCH 1/4] darwin: opt-in to Vulkan portability drivers (MoltenVK,
+ KosmicKrisp)
+
+- presenter + rasterizer own_device: VK_KHR_portability_enumeration +
+  VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR behind a host check
+  (VUID-VkInstanceCreateInfo-flags-06559 honored: flag always pairs with
+  its extension)
+- property name comparison via CStr (ash 0.38 i8 arrays)
+- measured on Apple M1 Pro: hardware rasterizer active at 3x scale,
+  833 MIPS headless (600 frames / 3.23 s, 0.04% interpreted) vs 454
+  software / 83.7 interpreter
+---
+ crates/zakuro-gpu/src/backend/vulkan.rs  | 42 ++++++++++++++++++++++--
+ crates/zakuro-gpu/src/raster/hardware.rs | 21 ++++++++++--
+ 2 files changed, 59 insertions(+), 4 deletions(-)
+
+diff --git a/crates/zakuro-gpu/src/backend/vulkan.rs b/crates/zakuro-gpu/src/backend/vulkan.rs
+index 041fe71..3dc31ef 100644
+--- a/crates/zakuro-gpu/src/backend/vulkan.rs
++++ b/crates/zakuro-gpu/src/backend/vulkan.rs
+@@ -12,6 +12,21 @@ use super::{place, GpuScreen, Overlay, PresentError, Presenter, ScreenFilter, Sc
+ use crate::raster::hardware::{can_render, render_device};
+ use crate::SharedDevice;
+ 
++pub(crate) fn is_portability_system() -> bool {
++    // macOS only ships Vulkan drivers behind the portability extension
++    // (MoltenVK, KosmicKrisp): the loader only enumerates a conformant
++    // portability driver for instances that opt in. Where a plain conformant
++    // driver already exists (Linux, pre-MoltenVK patterns), no flag is needed.
++    #[cfg(target_vendor = "apple")]
++    {
++        true
++    }
++    #[cfg(not(target_vendor = "apple"))]
++    {
++        false
++    }
++}
++
+ const VERTEX_SPIRV: &[u8] = include_bytes!("../../shaders/present.vert.spv");
+ const FRAGMENT_SPIRV: &[u8] = include_bytes!("../../shaders/present.frag.spv");
+ const STEREO_FRAGMENT_SPIRV: &[u8] = include_bytes!("../../shaders/present_stereo.frag.spv");
+@@ -153,13 +168,36 @@ impl VulkanPresenter {
+             .engine_name(c"Zakuro")
+             .api_version(vk::API_VERSION_1_3);
+ 
+-        let extensions = ash_window::enumerate_required_extensions(display.as_raw())
++        let mut extensions = ash_window::enumerate_required_extensions(display.as_raw())
+             .map_err(vk_fail("querying surface extensions"))?
+             .to_vec();
+ 
++        // the portability path: macOS only ships conformant drivers behind
++        // VK_KHR_portability_enumeration (MoltenVK, now KosmicKrisp), which a
++        // driver-less loader only enumerates for instances that ask for the
++        // extension and set the instance flag
++        let portability = 
++            // SAFETY: no layer names are passed; the loader stays loaded for this call
++            unsafe { entry.enumerate_instance_extension_properties(None) }
++            .map(|properties| {
++                properties.iter().any(|property|
++                    // SAFETY: ash fills `extension_name` as a NUL-terminated string
++                    unsafe { CStr::from_ptr(property.extension_name.as_ptr()) }
++                        .to_bytes() == ash::khr::portability_enumeration::NAME.to_bytes())
++            })
++            .unwrap_or(false)
++            || is_portability_system();
++        if portability {
++            extensions.push(ash::khr::portability_enumeration::NAME.as_ptr());
++        }
+         let instance_info = vk::InstanceCreateInfo::default()
+             .application_info(&application)
+-            .enabled_extension_names(&extensions);
++            .enabled_extension_names(&extensions)
++            .flags(if portability {
++                vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR
++            } else {
++                vk::InstanceCreateFlags::empty()
++            });
+         let instance = unsafe { entry.create_instance(&instance_info, None) }
+             .map_err(vk_fail("creating the instance"))?;
+ 
+diff --git a/crates/zakuro-gpu/src/raster/hardware.rs b/crates/zakuro-gpu/src/raster/hardware.rs
+index b3cd447..b49cca9 100644
+--- a/crates/zakuro-gpu/src/raster/hardware.rs
++++ b/crates/zakuro-gpu/src/raster/hardware.rs
+@@ -5715,8 +5715,25 @@ pub(crate) fn own_device() -> Result<SharedDevice, String> {
+     // requirements
+     let entry = unsafe { ash::Entry::load() }.map_err(|e| format!("no Vulkan loader, {e}"))?;
+     let app = vk::ApplicationInfo::default().application_name(c"zakuro").api_version(vk::API_VERSION_1_3);
+-    // SAFETY: a plain instance with no layers or extensions
+-    let instance = unsafe { entry.create_instance(&vk::InstanceCreateInfo::default().application_info(&app), None) }
++    // SAFETY: a plain instance with no layers; macOS opt-in via portability:
++    // the flag alone is a VUID violation without its extension (06559), and
++    // the loader only enumerates a conformant portability driver (MoltenVK,
++    // KosmicKrisp) for instances that opt in
++    let portability = crate::backend::vulkan::is_portability_system();
++    let portability_extensions = [ash::khr::portability_enumeration::NAME.as_ptr()];
++    let instance_info = vk::InstanceCreateInfo::default()
++        .application_info(&app)
++        .enabled_extension_names(if portability {
++            portability_extensions.as_slice()
++        } else {
++            &[]
++        })
++        .flags(if portability {
++            vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR
++        } else {
++            vk::InstanceCreateFlags::empty()
++        });
++    let instance = unsafe { entry.create_instance(&instance_info, None) }
+         .map_err(vk_error("create an instance"))?;
+     let made = pick(&instance).and_then(|(physical, family)| render_device(&entry, &instance, physical, family, &[]));
+     if made.is_err() {
+-- 
+2.56.0
+

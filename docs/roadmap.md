@@ -28,7 +28,7 @@ sin reiniciar y persistente por juego (el settings.toml del sandbox hermano).
 
 | Fase | Contenido | Criterio de salida |
 |---|---|---|
-| F7-0 Spike | `zakuro-gpu`: poder crear 2 superficies sobre un device compartido (`Backend::shared_device()` ya exponía el Arc); dos ventanas winit, una por monitor, con `--test-pattern` | 2 superficies vivas, resize/fps por superficie; fallback documentado si MoltenVK se rehúsa |
+| F7-0 Spike ✅ **código done, visual pendiente** | `zakuro-gpu`/app: **ya en el fork** — `--split-spike` abre 2ª ventana plana (Vulkan→OpenGL fallback) sobre el monitor siguiente, presentando la bottom sola desde los mismos frames (patch `0004-*`); eventos solo resize/close; presentación que falla cierra la ventana y sigue el main | KPI: compila limpio, headless intacto (1100+ MIPS spot); la validación de las DOS superficies en DOS monitores queda para el usuario (visual). El device-sharing menor queda para F7-1 |
 | F7-1 Modelo | `zakuro/src/lib.rs`: ventanas por rol (main = top + GUI egui + menús + teclado; companion = bottom + touch), eventos por `WindowId`, fullscreen por ventana, cerrar la companion revierte | Con split off: comportamiento byte-exacto a F6 |
 | F7-2 Config | `settings.rs` + menú Esc ("Pantallas en monitores": listar `available_monitors()`, asignar top/bottom, intercambio, aplicar al instante) + CLI `--split`, `--monitor-top/bottom` con `-h` completo | Persistencia settings.toml + elegir monitores desde el juego sin reiniciar |
 | F7-3 Pulido | Escala entera por monitor (scale_factor por ventana), drag entre displays, touch exacto con DPI distinto | ALBW: tocar la bottom en el monitor externo pincha donde debe |

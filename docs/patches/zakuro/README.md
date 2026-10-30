@@ -1,8 +1,9 @@
 # Parches del fork `vendors/zakuro`
 
 `vendors/` no entra a git (grande y ajeno). Cada cambio local al fork se
-commitea en el clone y se exporta aquí con `format-patch`, para reproducir el
-binario en un máquina fresca y para el PR de cortesía upstream:
+commitea en el clone (4 commites sobre `origin/main` del upstream en este
+momento) y se exporta aquí con `format-patch`, para reproducir el binario en
+una máquina fresca y para el PR de cortesía upstream:
 
     git clone https://github.com/fearkov/zakuro vendors/zakuro
     git -C vendors/zakuro am ../../docs/patches/zakuro/*.patch
@@ -10,5 +11,7 @@ binario en un máquina fresca y para el PR de cortesía upstream:
 
 | Parche | Qué hace | Estado |
 |---|---|---|
-| `0001-gpu-get-physical-device-properties2…` | props2 corre junto a portability: `VK_KHR_portability_subset` lo exige por spec el día que se active; prop2 es core 1.1, gratis en macOS | listo para PR upstream |
-| `0002-gpu-a-session-kpi…` | KPI de sesión: buckets de shading por draw (gpu/cpu) en `rasterize`, los underruns del queue ditos, la sesión lanza una línea `session kpi` al salir y headless imprime los buckets | local (insumo F8) |
+| `0001-darwin-opt-in-to-Vulkan-portability…` | el instance opta por `VK_KHR_portability_enumeration` + flag `ENUMERATE_PORTABILITY_KHR` (backend/vulkan.rs + raster/hardware.rs::own_device); verificado runtime en M1 Pro | listo para PR upstream |
+| `0002-gpu-get-physical-device-properties2…` | props2 corre junto a portability: `VK_KHR_portability_subset` lo exige por spec el día que se active; prop2 es core 1.1, gratis en macOS (patrón de ash-examples) | listo para PR upstream |
+| `0003-gpu-a-session-kpi…` | KPI de sesión: buckets de shading por draw (gpu/cpu) en `rasterize`; underruns totales; `session kpi` al cerrar ventana; headless imprime los buckets; KPI medidos en `docs/zakuro-macos.md` | local (insumo F8-G5) |
+| `0004-app-the-split-monitors-spike…` | **F7-0 spike**: `--split-spike` abre una segunda ventana plana (Vulkan, fallback OpenGL) sobre el monitor siguiente del main, presentando la pantalla bottom sola desde los mismos frames; sus eventos solo resizan/cierran; falla ⇒ cierra y sigue landing el main | spike: validación visual pendiente del usuario; default off ⇒ F6 byte-exacto |

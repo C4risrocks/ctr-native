@@ -1,7 +1,7 @@
 From e7b8cf53aa03bcc498f45e913b8dbac679213375 Mon Sep 17 00:00:00 2001
 From: C4risrocks <C4risrocks@users.noreply.github.com>
 Date: Fri, 30 Oct 2026 10:07:14 -0600
-Subject: [PATCH 1/2] gpu: get_physical_device_properties2 rides along the
+Subject: [PATCH 2/4] gpu: get_physical_device_properties2 rides along the
  portability instance
 
 VK_KHR_portability_subset, which only portability drivers expose, is bound
