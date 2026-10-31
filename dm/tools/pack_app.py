@@ -204,6 +204,14 @@ class IconSet:
             stale_png.unlink()
         source = iconset_dir / "icon_512x512.png"
         source.write_bytes(png_bytes(pixels, width, height, upsample=True))
+        # macOS 26's IconServices composes the running window's icon from
+        # these PNGs, and ImageIO faulted (EXC_ARM_DA_ALIGN inside
+        # PNGReadPlugin::InitializePluginData) reading a custom-encoded
+        # one: re-encode the source through sips, so every size of the set
+        # is Apple's own encoder's bytes.
+        apple_source = source.with_name("icon_512x512.png.sips.png")
+        if resample(source, 512, apple_source):
+            apple_source.replace(source)
         results = []
         for size in ICON_SIZES:
             target = iconset_dir / f"icon_{size}x{size}.png"

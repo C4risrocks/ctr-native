@@ -1,0 +1,43 @@
+From b448409c8f9c9422c445d84ccd8c3e8e8f88935c Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Sat, 31 Oct 2026 00:22:08 -0600
+Subject: [PATCH] loader: a bundled library's hints are not written beside it
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+hints land where the next recompile build reads them, the installed
+library; a copy deployed inside a bundle sits in a sealed parent that
+must not change under it — one of the integrity faults the pipeline's
+post-sign verify caught — so a bundled library records nothing.
+---
+ crates/zakuro-core/src/loader.rs | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/crates/zakuro-core/src/loader.rs b/crates/zakuro-core/src/loader.rs
+index 937bcbb..2211f87 100644
+--- a/crates/zakuro-core/src/loader.rs
++++ b/crates/zakuro-core/src/loader.rs
+@@ -193,7 +193,18 @@ pub fn load(path: impl AsRef<std::path::Path>, mut config: Config) -> Result<Sys
+                 }
+                 system.recompiled = Some(library);
+                 let text = exheader_text(&title);
+-                system.hints = Some(crate::hints::Hints::new(&path, text));
++                // the hints belong beside the library the next recompile
++                // build reads. a copy deployed inside a bundle sits in a
++                // sealed parent that must not change under it, and its
++                // redirected home has no installed place, so a bundled
++                // library records nothing: the next build loses those
++                // addresses, everything else keeps them.
++                let bundled = path.parent().map_or(false, |parent| {
++                    parent.ancestors().any(|step| step.file_name().is_some_and(|one| one == "Contents"))
++                });
++                if !bundled {
++                    system.hints = Some(crate::hints::Hints::new(&path, text));
++                }
+             }
+             Err(error) => log::warn!("could not load {}, {error}, interpreting everything", path.display()),
+         }
+-- 
+2.56.0
+

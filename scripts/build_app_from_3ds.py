@@ -330,10 +330,17 @@ def pack_stage(build: Build, state: progress_module.StageState, progress: progre
                 "  (or pass --host azahar)"
             )
         host_bin_for_inputs = zakuro_bin  # stamps the SOURCE; the launcher stays self-contained
+        # the hints zakuro writes beside the installed library, seeded into
+        # the bundle so the bundled copy keeps the file next to it; zakuro
+        # never writes a bundled copy's hints (a sealed parent must not
+        # change under it), so the seal holds.
+        hints_path = recompiled_dylib.with_suffix(".hints")
         extra_files = [
             (zakuro_bin, app_path / "Contents/MacOS/zakuro-host"),
             (recompiled_dylib, app_path / "Contents/Resources/game" / f"{build.title_id}.dylib"),
         ]
+        if hints_path.is_file():
+            extra_files.append((hints_path, app_path / "Contents/Resources/game" / f"{build.title_id}.hints"))
         host_version = file_stamp(zakuro_bin)
     else:
         zakuro_bin = None
