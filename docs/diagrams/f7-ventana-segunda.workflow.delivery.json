@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "49077bc7-6b55-4a6a-b098-fbee4d5be73c",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "/Users/christiandejmorenomarin/ctr-native/.archify/workflow-f7-ventana-20261030-234343/candidate.json",
+  "output": "/Users/christiandejmorenomarin/ctr-native/docs/diagrams/f7-ventana-segunda.workflow.html",
+  "specification": {
+    "sha256": "4224e1e43928598b692c7008297c53de0f977cc5497a40c681e56eca0ad51bd9",
+    "bytes": 7154
+  },
+  "artifact": {
+    "sha256": "126bb04be3e69d36f68c2ca8fc14434b8e06aa0dc307f33c5199cdf54d85fac6",
+    "bytes": 853316
+  }
+}

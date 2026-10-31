@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "dataflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "/Users/christiandejmorenomarin/ctr-native/.archify/dataflow-pipeline-build-20261030-233258/candidate.json",
+    "sha256": "30f73d7a3537f9eb6117954509d54ae5827dbd4746edc4ea18eeb904bf084853",
+    "bytes": 7349
+  },
+  "artifact": {
+    "path": "/Users/christiandejmorenomarin/ctr-native/docs/diagrams/pipeline-build.dataflow.html",
+    "sha256": "07244798fa6f42e1571dee223a8f8f6789fb7722bbd1ebd6000daf769700ee96",
+    "bytes": 856357
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "/Users/christiandejmorenomarin/ctr-native/docs/diagrams/pipeline-build.dataflow.finalize.json",
+    "summaryReceipt": "/Users/christiandejmorenomarin/ctr-native/docs/diagrams/pipeline-build.dataflow.finalize-summary.json",
+    "browserCheckReceipt": "/Users/christiandejmorenomarin/ctr-native/docs/diagrams/pipeline-build.dataflow.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.2.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-31T05:33:55.327Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 3411,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  },
+  "visualReviewRecommendation": {
+    "action": "inspect-route-readability",
+    "signals": {
+      "resolvedCrossovers": 1,
+      "routesOverSuggestedBends": 3,
+      "routesOverSuggestedStretch": 2
+    },
+    "reason": "Automated gates passed, but crossings or detours still need perceptual review before claiming visual quality.",
+    "affectedRoutes": {
+      "crossings": [
+        {
+          "left": {
+            "id": "f-sandbox",
+            "from": "pack",
+            "to": "sandbox",
+            "label": "crea, nunca toca",
+            "collectionIndex": 10,
+            "artifactIndex": 11
+          },
+          "right": {
+            "id": "f-reuse",
+            "from": "key",
+            "to": "app",
+            "label": "coincide ⇒ reuso",
+            "collectionIndex": 11,
+            "artifactIndex": 12
+          },
+          "point": [
+            852.5,
+            342.5
+          ]
+        }
+      ],
+      "detours": [
+        {
+          "relationship": {
+            "id": "f-cipher",
+            "from": "identify",
+            "to": "plaincopy",
+            "label": "cuando cifrado",
+            "collectionIndex": 3,
+            "artifactIndex": 4
+          },
+          "bends": 4,
+          "stretch": 1.693,
+          "directCorridorBlockers": [
+            {
+              "id": "md5",
+              "label": "verifica MD5",
+              "box": [
+                474,
+                242,
+                112,
+                58
+              ]
+            }
+          ]
+        },
+        {
+          "relationship": {
+            "id": "f-reuse",
+            "from": "key",
+            "to": "app",
+            "label": "coincide ⇒ reuso",
+            "collectionIndex": 11,
+            "artifactIndex": 12
+          },
+          "bends": 3,
+          "stretch": 1
+        },
+        {
+          "relationship": {
+            "id": "f-play",
+            "from": "app",
+            "to": "sandbox",
+            "label": "juega / salva",
+            "collectionIndex": 12,
+            "artifactIndex": 13
+          },
+          "bends": 4,
+          "stretch": 2.002
+        }
+      ],
+      "truncated": false
+    },
+    "repair": "Advisory only: this mode places or routes these relationships itself. Report them; do not remove relationships or meaning to reduce crossings."
+  }
+}

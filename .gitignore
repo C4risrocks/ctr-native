@@ -36,6 +36,8 @@ venv/
 .mypy_cache/
 .pytype/
 .ruff_cache/
+.archify/
+built-diagrams/
 
 # Editor noise.
 .idea/

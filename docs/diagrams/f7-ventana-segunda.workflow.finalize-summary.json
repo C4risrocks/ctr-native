@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "workflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "/Users/christiandejmorenomarin/ctr-native/.archify/workflow-f7-ventana-20261030-234343/candidate.json",
+    "sha256": "4224e1e43928598b692c7008297c53de0f977cc5497a40c681e56eca0ad51bd9",
+    "bytes": 7154
+  },
+  "artifact": {
+    "path": "/Users/christiandejmorenomarin/ctr-native/docs/diagrams/f7-ventana-segunda.workflow.html",
+    "sha256": "126bb04be3e69d36f68c2ca8fc14434b8e06aa0dc307f33c5199cdf54d85fac6",
+    "bytes": 853316
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "/Users/christiandejmorenomarin/ctr-native/docs/diagrams/f7-ventana-segunda.workflow.finalize.json",
+    "summaryReceipt": "/Users/christiandejmorenomarin/ctr-native/docs/diagrams/f7-ventana-segunda.workflow.finalize-summary.json",
+    "browserCheckReceipt": "/Users/christiandejmorenomarin/ctr-native/docs/diagrams/f7-ventana-segunda.workflow.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.2.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-31T05:33:55.327Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 2933,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  }
+}

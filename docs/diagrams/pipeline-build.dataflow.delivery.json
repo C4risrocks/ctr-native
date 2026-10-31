@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "3355837b-b4b8-47da-910c-13b33a4b4cf5",
+  "status": "current",
+  "command": "deliver",
+  "type": "dataflow",
+  "input": "/Users/christiandejmorenomarin/ctr-native/.archify/dataflow-pipeline-build-20261030-233258/candidate.json",
+  "output": "/Users/christiandejmorenomarin/ctr-native/docs/diagrams/pipeline-build.dataflow.html",
+  "specification": {
+    "sha256": "30f73d7a3537f9eb6117954509d54ae5827dbd4746edc4ea18eeb904bf084853",
+    "bytes": 7349
+  },
+  "artifact": {
+    "sha256": "07244798fa6f42e1571dee223a8f8f6789fb7722bbd1ebd6000daf769700ee96",
+    "bytes": 856357
+  }
+}
