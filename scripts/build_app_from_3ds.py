@@ -70,6 +70,7 @@ class Build:
     partition: PartitionInfo
     profile: Profile
     build_dir: Path
+    working_source: Path | None = None
     logs: Path = field(init=False)
     extract: Path = field(init=False)
 
@@ -147,15 +148,17 @@ def run(args: argparse.Namespace, progress: progress_module.Progress) -> bool:
         state = progress.stage(2, stages_total, "verify the dump")
         verify_hash(game_build, state, progress, args)
 
-        language = pick_language(game_build, args.language, progress)
         rom_for_app = game_build.source
         if not game_build.partition.no_crypto:
             state = progress.stage(3, stages_total, "decrypt a working copy", hint="--boot9")
             rom_for_app = decrypt_stage(game_build, state, progress, args)
+            game_build.working_source = rom_for_app
+            _, game_build.partition, _ = ncch.parse_card_image(rom_for_app)
             stages_total = 7
             state = progress.stage(4, stages_total, "finish the copy")
             progress.stage_end(state, "done")
 
+        language = args.language
         state = progress.stage(3 if stages_total == 6 else 5, stages_total, "make the icon")
         icon_pixels = icon_stage(game_build, state, progress, args)
 
@@ -166,7 +169,7 @@ def run(args: argparse.Namespace, progress: progress_module.Progress) -> bool:
 
         state = progress.stage(5 if stages_total == 6 else 7, stages_total, "verify the app")
         launch_stage(app, state, progress, args)
-    except (ContainerError, DecryptError, BuildFailed, OSError) as error:
+    except (ContainerError, DecryptError, BuildFailed, pack_app.PackError, OSError) as error:
         progress.say(str(error), error=True)
         if args.progress == "json":
             progress.say("-" * 40, error=True)
@@ -240,14 +243,14 @@ def pick_language(build: Build, language: str, progress: progress_module.Progres
 
 
 def load_smdh(build: Build) -> Smdh:
-    rom = build.source
+    rom = build.working_source or build.source
     smdh_raw = ncch.read_exefrs_file(rom, build.partition, "icon")
     return ncch.parse_smdh(smdh_raw)
 
 
 def decrypt_stage(build: Build, state: progress_module.StageState,
                   progress: progress_module.Progress, args: argparse.Namespace) -> Path:
-    if not args.boot9 and not args.keys:
+    if not args.boot9 and not args.keys and not build.partition.fixed_key:
         raise BuildFailed(
             "this dump's partitions are encrypted and no keys arrived:\n"
             "  --boot9 <your boot9.bin>   (most dumps; the copy stays in <id>_build)\n"

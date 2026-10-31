@@ -124,7 +124,7 @@ def launcher_text(host_bin: Path, rom_path: Path, sandbox_dir: Path,
         f"# host: zakuro · language: {language} · toolkit: {tool_version}",
         f"HOST_BIN={quote(host_bin)}",
         f"ROM={quote(rom_path)}",
-        f"HOME={quote(sandbox_dir / 'home')}",
+        f"export HOME={quote(sandbox_dir / 'home')}",
         'mkdir -p "$HOME"',
     ]
     scale_arg = (" --scale " + str(scale)) if scale else ""
@@ -218,7 +218,7 @@ class IconSet:
             return None
         for clean in iconset_dir.glob("icon_512x512.png"):
             clean.unlink()
-        icns = self.iconset_dir.parent / "AppIcon.icns"
+        icns = self.iconset_dir.parent.parent / "AppIcon.icns"
         icns_tmp = icns.with_suffix(".tmp.icns")
         try:
             subprocess.run(
@@ -362,8 +362,10 @@ def pack(
             for file in [entry for entry in source_dir.rglob("*") if entry.is_file()]:
                 destination_file = destination / file.relative_to(source_dir)
                 destination_file.parent.mkdir(parents=True, exist_ok=True)
+                if destination_file.exists():
+                    raise PackError(f"sandbox collision: {destination_file}")
                 shutil.copy2(file, destination_file)
-        shutil.rmtree(legacy)
+        # Preserve the legacy tree until migration is explicitly confirmed.
     ensure_sandbox(app)
     extra: list[tuple[Path, Path]] = list(inputs.extra_files or [])
     for source, target in extra:
@@ -380,7 +382,7 @@ def pack(
     write_atomic(macos / LAUNCHER_NAME, launcher_text(
         launch_bin, inputs.rom_path, sandbox_of(app)["sandbox"],
         language, inputs.toolkit_version,
-        launch_dylib,
+        launch_dylib, inputs.scale,
     ).encode())
     (macos / LAUNCHER_NAME).chmod(0o755)
     write_atomic(contents / "Info.plist", info_plist(app_name, app_bundle_id(title_id), version))
@@ -426,7 +428,7 @@ def pack_inputs_hash(inputs: PackInputs, icon_pixels: list[tuple[int, int, int, 
             for source, target in (inputs.extra_files or [])
         }),
         "launcher_args": schema_hash({str(index): value for index, value in enumerate(inputs.launcher_args)}),
-        "icon": "none" if icon_pixels is None else "present",
+        "icon": hashlib.sha256(repr(icon_pixels).encode()).hexdigest(),
     })
 
 

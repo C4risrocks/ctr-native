@@ -38,7 +38,8 @@ class Progress:
     """Tracks k/n stages; prints in place or emits JSON; never crashes a build."""
 
     def __init__(self, mode: str = "auto") -> None:
-        self.mode = mode or ("bar" if (hasattr(sys.stdout, "isatty") and sys.stdout.isatty()) else "lines")
+        automatic = "bar" if sys.stdout.isatty() else "lines"
+        self.mode = automatic if not mode or mode == "auto" else mode
         self.stream = self.mode == "json"
         self._last_frame_len = 0
         self._last_beat = 0.0

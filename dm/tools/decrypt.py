@@ -128,10 +128,12 @@ def load_key_x_table(source: KeySource) -> dict[int, bytes]:
             raise DecryptError(f"{source.keys_file}: no slot=key rows found")
         return table
     if source.boot9 and source.boot9.exists():
-        data = read_bytes(source, 0, 0x88F8)
+        offset = {0x10000: 0xD9D0, 0x8000: 0x59D0}.get(source.boot9.stat().st_size)
+        if offset is None:
+            raise DecryptError("boot9 must be a full or protected-region dump")
+        data = read_bytes(source.boot9, offset, 16)
         # 0x88D8..0x88F7: keyX for the bootrom slots 0x2C..0x2F (3dbrew key-init order).
-        base = 0x88D8
-        return {0x2C + index: data[base + index * 16 : base + index * 16 + 16] for index in range(4)}
+        return {0x2C: data}
     raise DecryptError("no key source: pass --boot9 or --keys (keys never live in this repo)")
 
 
@@ -146,7 +148,7 @@ def normal_key(key_x: bytes, key_y: bytes) -> bytes:
 
 def partition_keys(ncch_header: bytes, key_x_table: dict[int, bytes]) -> PartitionKeys:
     """Derive both group keys of one NCCH from its plaintext header."""
-    if ncch_header[:4] != b"NCCH":
+    if ncch_header[0x100:0x104] != b"NCCH":
         raise DecryptError("not an NCCH header")
     version = int.from_bytes(ncch_header[0x112:0x114], "little")
     crypto_method = ncch_header[0x188 + 3]
@@ -198,11 +200,11 @@ def ctr_at(initial: bytes, offset_in_region: int) -> bytes:
 def decrypt_card_image(source: Path, destination: Path, key_source: KeySource,
                        say: Callable[[str], None] = print) -> Path:
     """Decrypt an NCSD card image into `destination`; the original stays untouched."""
-    table = struct.unpack_from("<8II", read_bytes(source, 0, 0x200), 0x120)
-    key_table = load_key_x_table(key_source)
+    table = struct.unpack_from("<16I", read_bytes(source, 0, 0x200), 0x120)
+    key_table = load_key_x_table(key_source) if key_source.boot9 or key_source.keys_file else {}
     file_size = source.stat().st_size
     position = 0
-    with open(source, "rb", buffering=0) as reader, open(destination, "wb", buffering=0) as writer:
+    with open(source, "rb", buffering=0) as reader, open(destination, "w+b", buffering=0) as writer:
         for entry in range(8):
             base = table[entry * 2] * MEDIA_UNIT
             size = table[entry * 2 + 1] * MEDIA_UNIT
@@ -227,7 +229,7 @@ def decrypt_partition(reader, writer, base: int, size: int,  # type: ignore[no-u
     """
     aes = engine()
     header = read_into(reader, base, 0x200)
-    if header[:4] != b"NCCH":
+    if header[0x100:0x104] != b"NCCH":
         raise DecryptError(f"partition at 0x{base:08x}: not NCCH")
     flags = header[0x18F]
     no_crypto = bool(flags & FLAG_NO_CRYPTO)
@@ -254,7 +256,7 @@ def decrypt_partition(reader, writer, base: int, size: int,  # type: ignore[no-u
         say(f"  partition 0x{base:08x}: no-crypto plaintext, {size:,} bytes")
         return part_end
 
-    keys = partition_keys(header, key_table)
+    keys = partition_keys(header, {MENU_INFO_SLOT: bytes(16)} if fixed_key else key_table)
     # FixedKey partitions encrypt with the documented zero application key.
     menu_key = bytes(16) if fixed_key else keys.menu_info_key
     content_key = bytes(16) if fixed_key else keys.content_key
@@ -295,7 +297,7 @@ def decrypt_partition(reader, writer, base: int, size: int,  # type: ignore[no-u
                 copy_range(reader, writer, cursor, data_start - cursor)
             file_counter = ctr_at(exofs_counter, 0x200 + file_offset)  # the ExeFS-start CTR + file bytes
             stream_decrypt(reader, writer, data_start, file_size, file_key, file_counter, aes)
-            cursor = data_start + aligned16(file_size)
+            cursor = data_start + file_size
         exofs_end = exofs_start + exofs_size
         if exofs_end > cursor:
             copy_range(reader, writer, cursor, exofs_end - cursor)

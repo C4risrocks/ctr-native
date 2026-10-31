@@ -107,6 +107,7 @@ def build_cxi_partition(
     offset = (offset + 15) & ~15
     exefs[offset : offset + len(smdh_bytes)] = smdh_bytes
 
+    exefs += bytes((-len(exefs)) % MEDIA_UNIT)
     # Partition layout: header (0x200) + exheader (0x400) + plain region 0x200 + exefs.
     plain = bytes(0x200)
     partition_size = 0x200 + len(exheader) + len(plain) + len(exefs_size_bytes := exefs)  # noqa: F841

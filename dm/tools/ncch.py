@@ -216,6 +216,8 @@ def read_exefrs_file(
             f"{path.name}: ExeFS is encrypted ({'FixedKey' if partition.fixed_key else 'standard crypto'})"
             " and no decryption was provided (--boot9 or a keys file)"
         )
+    if partition.exefs_offset * MEDIA_UNIT + partition.exefs_size * MEDIA_UNIT > partition.size:
+        raise ContainerError("ExeFS exceeds partition bounds")
     exefs_base = partition.base + partition.exefs_offset * MEDIA_UNIT
     header = _read_exact(path, exefs_base, EXEFS_HEADER_SIZE)
     if len(header) < EXEFS_HEADER_SIZE:
@@ -228,6 +230,8 @@ def read_exefrs_file(
         sec_offset, sec_size = struct.unpack_from("<II", entry, 8)
         if sec_name != name:
             continue
+        if EXEFS_HEADER_SIZE + sec_offset + sec_size > partition.exefs_size * MEDIA_UNIT:
+            raise ContainerError("ExeFS section exceeds region bounds")
         file_base = partition.exefs_offset * MEDIA_UNIT + EXEFS_HEADER_SIZE + sec_offset
         data = _read_exact(path, partition.base + file_base, sec_size)
         if len(data) < sec_size:
@@ -243,7 +247,7 @@ def parse_smdh(smdh: bytes) -> Smdh:
     if len(smdh) < 4 or smdh[:4] != b"SMDH":
         raise ContainerError("not an SMDH (bad magic)")
     if len(smdh) < SMDH_SIZE:
-        smdh = smdh.ljust(SMDH_SIZE, b"\x00")
+        raise ContainerError("truncated SMDH")
     out = Smdh()
     for language in range(12):
         start = SMDH_TITLE_BLOCK_OFFSET + language * TITLE_ENTRY_STRIDE
