@@ -26,6 +26,8 @@ def fuzz_one(data: bytes) -> None:
     with TemporaryDirectory(prefix="ctr-fuzz-") as directory:
         source = Path(directory) / "synthetic.3ds"
         source.write_bytes(data)
+        with suppress(ncch.ContainerError):
+            ncch.parse_card_partitions(source)
         try:
             _, partition, _ = ncch.parse_card_image(source)
             ncch.read_exefrs_file(source, partition, "icon")
@@ -44,7 +46,10 @@ def run_mutations(iterations: int = 500, seed: int = 0) -> None:
     rng = random.Random(seed)
     with TemporaryDirectory() as directory:
         card = build_card_image(build_cxi_partition(), Path(directory) / "seed.3ds").read_bytes()
-    seeds = (card, build_cxi_partition(), build_smdh(), b"", b"SMDH")
+    secondary = build_cxi_partition(flag_byte=0)
+    mixed = bytearray(card + secondary)
+    struct.pack_into("<II", mixed, 0x128, len(card) // 512, len(secondary) // 512)
+    seeds = (card, bytes(mixed), build_cxi_partition(), build_smdh(), b"", b"SMDH")
     for payload in seeds:
         fuzz_one(payload)
     for offset in (0x120, 0x124, 0x400 + 0x180, 0x400 + 0x1A0, 0x400 + 0x1A4):

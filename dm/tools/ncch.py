@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import struct
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 MEDIA_UNIT = 0x200
@@ -160,28 +160,43 @@ def classify(path: Path) -> GameFile:
 
 
 def parse_card_image(path: Path) -> tuple[str, PartitionInfo, int]:
-    """Parse a card image: (title id, the application NCCH (CXI) of partition 0, media size).
+    """Return partition zero's title and metadata after validating the complete card."""
+    partitions = parse_card_partitions(path)
+    partition = next((one for one in partitions if one.index == 0), None)
+    if partition is None:
+        raise ContainerError("NCSD card has no application partition zero")
+    header = _read_exact(path, 0, 0x200)
+    media_units = struct.unpack_from("<I", header, 0x104)[0]
+    title_id = f"{partition.program_id & 0xFFFF_FFFF_FFFF_FFFF:016x}"
+    return title_id, partition, media_units
 
-    Only partition 0 is parsed: retail games are executable there, and its
-    decoded offsets decide every later read.
+
+def parse_card_partitions(path: Path) -> list[PartitionInfo]:
+    """Inspect all populated NCSD entries in table order, retaining their indexes.
+
+    The entire table is bounded and checked for overlap before any NCCH is
+    read. Empty entries are omitted; missing partition zero is allowed for
+    inspection, while parse_card_image requires an application there.
     """
     header = _read_exact(path, 0, 0x200)
-    if len(header) < 0x160 or header[0x100:0x104] != b"NCSD":
+    if header[0x100:0x104] != b"NCSD":
         raise ContainerError(f"{path.name}: not an NCSD card image")
-    media_units = struct.unpack_from("<I", header, 0x104)[0]
     table = struct.unpack_from("<16I", header, 0x120)
+    entries = [(index, table[index * 2] * MEDIA_UNIT, table[index * 2 + 1] * MEDIA_UNIT)
+               for index in range(8) if table[index * 2 + 1]]
     file_size = path.stat().st_size
     end = 0x200
-    for offset, length in sorted((table[i] * MEDIA_UNIT, table[i + 1] * MEDIA_UNIT)
-                                 for i in range(0, 16, 2) if table[i + 1]):
+    for _, offset, length in sorted(entries, key=lambda one: one[1]):
         if offset < end or length < NCCH_HEADER_SIZE or offset + length > file_size:
             raise ContainerError("NCSD partition has invalid bounds or overlaps another partition")
         end = offset + length
-    part_offset, part_size = table[:2]
-    base, size = part_offset * MEDIA_UNIT, part_size * MEDIA_UNIT
-    partition = parse_ncch_header(path, base, size)
-    title_id = f"{partition.program_id & 0xFFFF_FFFF_FFFF_FFFF:016x}"
-    return title_id, partition, media_units
+    partitions = []
+    for index, offset, length in entries:
+        partition = replace(parse_ncch_header(path, offset, length), index=index)
+        if not partition.magic_ok:
+            raise ContainerError(f"NCSD partition {index} has no NCCH header")
+        partitions.append(partition)
+    return partitions
 
 
 def parse_ncch_header(path: Path, base: int, size: int) -> PartitionInfo:
