@@ -26,8 +26,10 @@ References (facts reimplemented here, no copied code):
 from __future__ import annotations
 
 import hashlib
+import os
+import tempfile
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from collections.abc import Callable
 
@@ -99,42 +101,56 @@ class KeySource:
 
 @dataclass(frozen=True)
 class PartitionKeys:
-    """Derived group keys of one NCCH partition; nothing here is secret-relevant."""
+    """In-memory derived group keys; never serialize or log."""
 
-    menu_info_key: bytes
-    content_key: bytes
+    menu_info_key: bytes = field(repr=False)
+    content_key: bytes = field(repr=False)
     partition_id: int
     version: int
     region_offsets: dict[str, int]  # exheader / exefs / romfs: bytes from partition base
 
 
 def load_key_x_table(source: KeySource) -> dict[int, bytes]:
-    """Bootrom keyX entries (slots 0x2C..0x2F) from a boot9 dump, or a `slot=hex` TSV."""
-    if source.keys_file and source.keys_file.exists():
-        table: dict[int, bytes] = {}
-        for number, raw in enumerate(source.keys_file.read_text().splitlines(), 1):
-            line = raw.split("#", 1)[0].strip()
-            if not line or "=" not in line:
-                continue
-            slot_text, _, key_text = line.partition("=")
-            try:
-                slot, key = int(slot_text.strip(), 16), bytes.fromhex(key_text.replace(" ", ""))
-            except ValueError as error:
-                raise DecryptError(f"{source.keys_file}:{number}: {error}") from error
-            if not 0x0 <= slot <= 0x3F or len(key) != 16:
-                raise DecryptError(f"{source.keys_file}:{number}: bad slot or key length")
-            table[slot] = key
-        if not table:
-            raise DecryptError(f"{source.keys_file}: no slot=key rows found")
-        return table
-    if source.boot9 and source.boot9.exists():
+    """Load retail slot 0x2C from full/protected boot9; TSV supplies other slots.
+
+    The retail keyblob starts at 0xD860 (full) / 0x5860 (protected),
+    with the shared 0x2C keyX at +0x170. No key bytes are bundled here.
+    """
+    table: dict[int, bytes] = {}
+    if source.boot9 is not None:
         offset = {0x10000: 0xD9D0, 0x8000: 0x59D0}.get(source.boot9.stat().st_size)
         if offset is None:
             raise DecryptError("boot9 must be a full or protected-region dump")
-        data = read_bytes(source.boot9, offset, 16)
-        # 0x88D8..0x88F7: keyX for the bootrom slots 0x2C..0x2F (3dbrew key-init order).
-        return {0x2C: data}
-    raise DecryptError("no key source: pass --boot9 or --keys (keys never live in this repo)")
+        table[MENU_INFO_SLOT] = read_bytes(source.boot9, offset, BLOCK)
+    if source.keys_file is not None:
+        if source.keys_file.stat().st_size > 64 * 1024:
+            raise DecryptError("keys table exceeds 64 KiB")
+        try:
+            rows = source.keys_file.read_text(encoding="utf-8").splitlines()
+        except UnicodeError as error:
+            raise DecryptError("keys table must be UTF-8 text") from error
+        count = 0
+        for number, raw in enumerate(rows, 1):
+            line = raw.split("#", 1)[0].strip()
+            if not line:
+                continue
+            try:
+                slot_text, key_text = line.split("=", 1)
+                slot = int(slot_text.strip(), 16)
+                key = bytes.fromhex(key_text.strip())
+            except ValueError as error:
+                raise DecryptError(f"keys table row {number}: expected slot=hexkey") from error
+            if not 0 <= slot <= 0x3F or len(key) != BLOCK:
+                raise DecryptError(f"keys table row {number}: invalid slot or key length")
+            if slot in table and table[slot] != key:
+                raise DecryptError(f"keys table row {number}: conflicting slot 0x{slot:02X}")
+            table[slot] = key
+            count += 1
+        if not count:
+            raise DecryptError("keys table has no slot=key rows")
+    if not table:
+        raise DecryptError("no key source: pass --boot9 or --keys")
+    return table
 
 
 def normal_key(key_x: bytes, key_y: bytes) -> bytes:
@@ -148,6 +164,8 @@ def normal_key(key_x: bytes, key_y: bytes) -> bytes:
 
 def partition_keys(ncch_header: bytes, key_x_table: dict[int, bytes]) -> PartitionKeys:
     """Derive both group keys of one NCCH from its plaintext header."""
+    if len(ncch_header) != 0x200:
+        raise DecryptError("truncated NCCH header")
     if ncch_header[0x100:0x104] != b"NCCH":
         raise DecryptError("not an NCCH header")
     version = int.from_bytes(ncch_header[0x112:0x114], "little")
@@ -162,7 +180,13 @@ def partition_keys(ncch_header: bytes, key_x_table: dict[int, bytes]) -> Partiti
             "this partition uses the seeded 9.6 crypto (new keyY):"
             " use a decrypted dump (the usual) — seed support is not included"
         )
+    if ncch_header[0x18F] & FLAG_FIXED_KEY:
+        if int.from_bytes(ncch_header[0x118:0x120], "little") & (1 << 36):
+            raise DecryptError("fixed system-key partitions are not supported")
+        key_x_table = {MENU_INFO_SLOT: bytes(BLOCK), content_slot: bytes(BLOCK)}
     missing = [hex(slot) for slot in {MENU_INFO_SLOT, content_slot} if slot not in key_x_table]
+    if any(len(key) != BLOCK for key in key_x_table.values()):
+        raise DecryptError("keyX must contain exactly 16 bytes")
     if missing:
         raise DecryptError(f"boot9/keys table has no keyX for slot(s) {missing}")
     key_y = ncch_header[:0x10]  # 3dbrew/NCCH: keyY = first 0x10 bytes of the signature
@@ -199,166 +223,207 @@ def ctr_at(initial: bytes, offset_in_region: int) -> bytes:
 
 def decrypt_card_image(source: Path, destination: Path, key_source: KeySource,
                        say: Callable[[str], None] = print) -> Path:
-    """Decrypt an NCSD card image into `destination`; the original stays untouched."""
-    table = struct.unpack_from("<16I", read_bytes(source, 0, 0x200), 0x120)
-    key_table = load_key_x_table(key_source) if key_source.boot9 or key_source.keys_file else {}
+    """Verify a complete working copy before replacing the destination."""
+    if source.resolve() == destination.resolve() or (destination.exists() and source.samefile(destination)):
+        raise DecryptError("source and decrypted destination must be different files")
+    header = read_bytes(source, 0, 0x200)
+    if header[0x100:0x104] != b"NCSD":
+        raise DecryptError("not an NCSD card image")
+    table = struct.unpack_from("<16I", header, 0x120)
     file_size = source.stat().st_size
-    position = 0
-    with open(source, "rb", buffering=0) as reader, open(destination, "w+b", buffering=0) as writer:
-        for entry in range(8):
-            base = table[entry * 2] * MEDIA_UNIT
-            size = table[entry * 2 + 1] * MEDIA_UNIT
-            if not size:
-                continue
-            if base > position:
-                copy_range(reader, writer, position, base - position)
-            position = decrypt_partition(reader, writer, base, size, key_table, say)
-        if file_size > position:
-            copy_range(reader, writer, position, file_size - position)
-    say(f"decrypted copy: {destination.name} ({destination.stat().st_size:,} bytes)")
+    partitions = sorted((table[i] * MEDIA_UNIT, table[i + 1] * MEDIA_UNIT)
+                        for i in range(0, 16, 2) if table[i + 1])
+    end = 0x200
+    for base, size in partitions:
+        if base < end or size < 0x200 or base + size > file_size:
+            raise DecryptError("partition overlaps another region or exceeds the card image")
+        end = base + size
+    key_table = load_key_x_table(key_source) if key_source.boot9 or key_source.keys_file else {}
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                mode="w+b", dir=destination.parent, prefix=".decrypt-", delete=False) as writer:
+            temporary = Path(writer.name)
+            with source.open("rb", buffering=0) as reader:
+                position = 0
+                for base, size in partitions:
+                    copy_range(reader, writer, position, base - position)
+                    position = decrypt_partition(reader, writer, base, size, key_table, say)
+                copy_range(reader, writer, position, file_size - position)
+            writer.flush()
+            if writer.tell() != file_size:
+                raise DecryptError("decrypted copy changed the card image size")
+            os.fsync(writer.fileno())
+        temporary.replace(destination)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    say(f"decrypted copy: {destination.name} ({file_size:,} bytes)")
     return destination
 
 
-def decrypt_partition(reader, writer, base: int, size: int,  # type: ignore[no-untyped-def]
-                      key_table: dict[int, bytes], say: Callable[[str], None]) -> int:
-    """One NCCH: header copy with NoCrypto, every encrypted region plaintexted.
+def checked_regions(header: bytes, size: int) -> list[tuple[int, int, str]]:
+    """Validate the NCCH work list before data offsets become file reads."""
+    exheader_size = little(header, 0x180)
+    if exheader_size not in (0, 0x400):
+        raise DecryptError("unsupported extended header size")
+    regions = [(0x200, 0x800 if exheader_size else 0, "exheader")]
+    for offset, name in ((0x190, "plain"), (0x198, "logo"), (0x1A0, "exefs"), (0x1B0, "romfs")):
+        regions.append((little(header, offset) * MEDIA_UNIT, little(header, offset + 4) * MEDIA_UNIT, name))
+    regions = sorted(region for region in regions if region[1])
+    end = 0x200
+    for offset, length, name in regions:
+        if offset < end or offset + length > size:
+            raise DecryptError(f"{name} overlaps another NCCH region or exceeds partition bounds")
+        if name == "exefs" and length < 0x200:
+            raise DecryptError("ExeFS is shorter than its header")
+        end = offset + length
+    for offset, name in ((0x1A0, "ExeFS"), (0x1B0, "RomFS")):
+        if little(header, offset + 8) > little(header, offset + 4):
+            raise DecryptError(f"{name} superblock exceeds region bounds")
+    return regions
 
-    The work list is the file's own order (header 0x200, exheader region, ExeFS
-    files per section table, RomFS); padding gaps between regions are copied
-    unchanged, keeping the container byte-identical apart from the decryption.
-    """
-    aes = engine()
+
+def decrypt_partition(reader, writer, base: int, size: int,
+                      key_table: dict[int, bytes], say: Callable[[str], None]) -> int:
+    """Transform one partition without moving any region or padding byte."""
+    if base < 0 or size < 0x200:
+        raise DecryptError("invalid NCCH partition bounds")
+    mark = reader.tell()
+    reader.seek(0, 2)
+    source_size = reader.tell()
+    reader.seek(mark)
+    if base + size > source_size:
+        raise DecryptError("NCCH partition exceeds source bounds")
     header = read_into(reader, base, 0x200)
     if header[0x100:0x104] != b"NCCH":
         raise DecryptError(f"partition at 0x{base:08x}: not NCCH")
+    content_size = little(header, 0x104) * MEDIA_UNIT
+    if content_size < 0x200 or content_size > size:
+        raise DecryptError("NCCH content size exceeds partition bounds")
+    regions = checked_regions(header, content_size)
     flags = header[0x18F]
-    no_crypto = bool(flags & FLAG_NO_CRYPTO)
-    fixed_key = bool(flags & FLAG_FIXED_KEY)
-    exheader_size = little(header, 0x180)
-    plain_off = little(header, 0x190) * MEDIA_UNIT
-    plain_size = little(header, 0x194) * MEDIA_UNIT
-    exofs_off = little(header, 0x1A0) * MEDIA_UNIT
-    exofs_size = little(header, 0x1A4) * MEDIA_UNIT
-    exofs_hash_size = little(header, 0x1A8) * MEDIA_UNIT
-    romfs_off = little(header, 0x1B0) * MEDIA_UNIT
-    romfs_size = little(header, 0x1B4) * MEDIA_UNIT
-    romfs_hash_size = little(header, 0x1B8) * MEDIA_UNIT
-    part_end = base + size
-
-    plain_header = bytearray(header)
-    plain_header[0x18F] = (flags | FLAG_NO_CRYPTO) & 0xFF
-    writer.seek(base)
-    writer.write(bytes(plain_header))
-
-    cursor = base + 0x200
-    if no_crypto:
-        copy_range(reader, writer, cursor, part_end - cursor)
+    if flags & FLAG_NO_CRYPTO:
+        copy_range(reader, writer, base, size)
         say(f"  partition 0x{base:08x}: no-crypto plaintext, {size:,} bytes")
-        return part_end
+        return base + size
+    keys = partition_keys(header, key_table)
+    aes = engine()
+    fixed = bool(flags & FLAG_FIXED_KEY)
+    menu_key = bytes(BLOCK) if fixed else keys.menu_info_key
+    content_key = bytes(BLOCK) if fixed else keys.content_key
+    plain_header = bytearray(header)
+    plain_header[0x18F] = flags | FLAG_NO_CRYPTO
+    writer.seek(base)
+    writer.write(plain_header)
+    cursor = base + 0x200
+    for relative, length, name in regions:
+        start = base + relative
+        copy_range(reader, writer, cursor, start - cursor)
+        if name in ("plain", "logo"):
+            copy_range(reader, writer, start, length)
+        elif name == "exefs":
+            counter = region_counter(keys, name)
+            stream_decrypt(reader, writer, start, 0x200, menu_key, counter, aes)
+            table = read_plain(writer, start, 0x200)
+            files = []
+            filenames = set()
+            for section in range(10):
+                entry = table[section * 16:(section + 1) * 16]
+                filename = entry[:8].rstrip(b"\0").decode("ascii", "replace")
+                offset, count = struct.unpack_from("<II", entry, 8)
+                if not count:
+                    continue
+                if filename in filenames:
+                    raise DecryptError("duplicate ExeFS section name")
+                filenames.add(filename)
+                if not filename or offset % BLOCK or 0x200 + offset + count > length:
+                    raise DecryptError("ExeFS section has invalid alignment or bounds")
+                digest_offset = 0x1E0 - section * 32
+                expected_hash = table[digest_offset:digest_offset + 32]
+                files.append((start + 0x200 + offset, count, filename, expected_hash))
+            position = start + 0x200
+            for offset, count, filename, expected_hash in sorted(files):
+                if offset < position:
+                    raise DecryptError("overlapping ExeFS sections")
+                delta = position - start
+                stream_decrypt(reader, writer, position, offset - position, menu_key,
+                               ctr_at(counter, delta), aes, skip=delta % BLOCK)
+                key = menu_key if filename in MENU_INFO_NAMES else content_key
+                stream_decrypt(reader, writer, offset, count, key, ctr_at(counter, offset - start), aes)
+                if any(expected_hash) and hash_plain(writer, offset, count) != expected_hash:
+                    raise DecryptError("ExeFS file hash mismatch: wrong keys or modified container")
+                position = offset + count
+            delta = position - start
+            stream_decrypt(reader, writer, position, start + length - position, menu_key,
+                           ctr_at(counter, delta), aes, skip=delta % BLOCK)
+        else:
+            key = menu_key if name == "exheader" else content_key
+            stream_decrypt(reader, writer, start, length, key, region_counter(keys, name), aes)
+        cursor = start + length
+    copy_range(reader, writer, cursor, base + size - cursor)
+    for offset, hash_offset, name in ((0x1A0, 0x1C0, "ExeFS"), (0x1B0, 0x1E0, "RomFS")):
+        hash_size = little(header, offset + 8) * MEDIA_UNIT
+        if hash_size:
+            produced = hash_plain(writer, base + little(header, offset) * MEDIA_UNIT, hash_size)
+            if produced != header[hash_offset:hash_offset + 32]:
+                raise DecryptError(f"{name} superblock hash mismatch: wrong keys or modified container")
+    say(f"  partition 0x{base:08x}: decrypted, {size:,} bytes, superblocks checked where present")
+    return base + size
 
-    keys = partition_keys(header, {MENU_INFO_SLOT: bytes(16)} if fixed_key else key_table)
-    # FixedKey partitions encrypt with the documented zero application key.
-    menu_key = bytes(16) if fixed_key else keys.menu_info_key
-    content_key = bytes(16) if fixed_key else keys.content_key
 
-    # 1. extended header region (menu info; includes the access descriptor).
-    if exheader_size:
-        stream_decrypt(reader, writer, cursor, exheader_size, menu_key,
-                       region_counter(keys, "exheader"), aes)
-        cursor += exheader_size
-    # 2. plain region (SDK tags) and the 5.0+ logo region: both plaintext in
-    # the source, so they pass through unchanged in this loop.
-    if plain_off and plain_size:
-        end = base + plain_off + plain_size
-        if end > cursor:
-            copy_range(reader, writer, cursor, end - cursor)
-            cursor = end
-    # 3. ExeFS: the header decrypts as menu-info; each file by its group, with
-    # counters continuing the region's own counter by file offset (3dbrew).
-    if exofs_off and exofs_size:
-        exofs_start = base + exofs_off
-        if exofs_start > cursor:
-            copy_range(reader, writer, cursor, exofs_start - cursor)
-        exofs_counter = region_counter(keys, "exefs")
-        cursor = exofs_start
-        stream_decrypt(reader, writer, cursor, 0x200, menu_key, exofs_counter, aes)
-        cursor += 0x200
-        section_table = read_plain(writer, exofs_start, 0x200)
-        for section in range(8):
-            entry = section_table[section * 16 : section * 16 + 16]
-            name = entry[:8].rstrip(b"\x00").decode("ascii", "replace")
-            file_offset = int.from_bytes(entry[8:12], "little")
-            file_size = int.from_bytes(entry[12:16], "little")
-            if not name or not file_size:
-                continue
-            file_key = menu_key if name in MENU_INFO_NAMES else content_key
-            data_start = exofs_start + 0x200 + file_offset
-            if data_start > cursor:
-                copy_range(reader, writer, cursor, data_start - cursor)
-            file_counter = ctr_at(exofs_counter, 0x200 + file_offset)  # the ExeFS-start CTR + file bytes
-            stream_decrypt(reader, writer, data_start, file_size, file_key, file_counter, aes)
-            cursor = data_start + file_size
-        exofs_end = exofs_start + exofs_size
-        if exofs_end > cursor:
-            copy_range(reader, writer, cursor, exofs_end - cursor)
-            cursor = exofs_end
-        if exofs_hash_size:
-            produced = hashlib.sha256(read_plain(writer, exofs_start, exofs_hash_size)).digest()
-            if produced != bytes(header[0x1C0:0x1E0]):
-                raise DecryptError(
-                    f"partition 0x{base:08x}: ExeFS superblock hash mismatch — wrong keys"
-                    " (boot9 of a different console?) or a modified container"
-                )
-    # 4. RomFS: one contiguous content-group region.
-    if romfs_off and romfs_size:
-        romfs_start = base + romfs_off
-        if romfs_start > cursor:
-            copy_range(reader, writer, cursor, romfs_start - cursor)
-        stream_decrypt(reader, writer, romfs_start, romfs_size, content_key,
-                       region_counter(keys, "romfs"), aes)
-        cursor = romfs_start + romfs_size
-        if romfs_hash_size:
-            produced = hashlib.sha256(read_plain(writer, romfs_start, romfs_hash_size)).digest()
-            if produced != bytes(header[0x1E0:0x200]):
-                raise DecryptError(
-                    f"partition 0x{base:08x}: RomFS superblock hash mismatch"
-                    " — wrong content keys, or a seeded 9.6+ partition"
-                )
-    # 5. anything after the last known region (rare) copies verbatim.
-    if part_end > cursor:
-        copy_range(reader, writer, cursor, part_end - cursor)
-    say(f"  partition 0x{base:08x}: {'fixed key' if fixed_key else 'derived keys'},"
-        f" {size:,} bytes, superblock {'verified' if (exofs_hash_size or romfs_hash_size) else 'not checked'}")
-    return part_end
+def hash_plain(writer, offset: int, length: int) -> bytes:
+    """Hash written bytes with a bounded read and restore the output position."""
+    digest = hashlib.sha256()
+    while length:
+        count = min(COPY_CHUNK, length)
+        digest.update(read_plain(writer, offset, count))
+        offset += count
+        length -= count
+    return digest.digest()
 
 
 def stream_decrypt(reader, writer, offset: int, length: int, key: bytes,  # type: ignore[no-untyped-def]
-                   counter_at_offset: bytes, aes: KeystreamFn) -> None:
+                   counter_at_offset: bytes, aes: KeystreamFn, skip: int = 0) -> None:
     """Decrypt [offset, offset+length); `counter_at_offset` is the counter at `offset`.
 
-    Data offsets the caller passes are always AES-block aligned here (the
-    regions the container supplies are media-unit aligned, ExeFS files are
-    CTR-aligned per 3dbrew), so the counter moves one block per 16 bytes.
+    ``skip`` selects a byte inside the initial counter block, for the
+    original-key padding after an ExeFS file with an unaligned size.
     """
     if length == 0:
         return
+    if offset < 0 or length < 0 or len(key) != BLOCK or not 0 <= skip < BLOCK:
+        raise DecryptError("invalid encrypted range or key length")
     reader.seek(offset)
-    blocks = 0
+    writer.seek(offset)
+    consumed = 0
     left = length
     while left > 0:
         take = min(COPY_CHUNK, left)
         chunk = reader.read(take)
         if len(chunk) < take:
             raise DecryptError("file ended inside an encrypted region")
-        keystream = aes(key, ctr_at(counter_at_offset, blocks * BLOCK), take)
+        try:
+            prefix = (skip + consumed) % BLOCK
+            stream = aes(key, ctr_at(counter_at_offset, skip + consumed), take + prefix)
+            keystream = stream[prefix:]
+        except Exception:
+            # OpenSSL exceptions carry argv, including the private key.
+            raise DecryptError("AES engine failed") from None
+        if len(keystream) != take:
+            raise DecryptError("AES engine returned a short keystream")
         writer.write(bytes(a ^ b for a, b in zip(chunk, keystream, strict=True)))
-        blocks += take // BLOCK
+        consumed += take
         left -= take
 
 
 def copy_range(reader, writer, offset: int, length: int) -> None:  # type: ignore[no-untyped-def]
     """Copy a byte range verbatim (padding stays as the dump has it)."""
+    if offset < 0 or length < 0:
+        raise DecryptError("invalid plaintext range")
     reader.seek(offset)
+    writer.seek(offset)
     left = length
     while left > 0:
         chunk = reader.read(min(COPY_CHUNK, left))
@@ -370,6 +435,8 @@ def copy_range(reader, writer, offset: int, length: int) -> None:  # type: ignor
 
 def read_plain(writer, offset: int, length: int) -> bytes:  # type: ignore[no-untyped-def]
     """Read back the written (decrypted) bytes, without moving the write pointer."""
+    if offset < 0 or length < 0 or length > COPY_CHUNK:
+        raise DecryptError("invalid bounded verification read")
     mark = writer.tell()
     writer.flush()
     writer.seek(offset)
@@ -390,6 +457,8 @@ def little(header: bytes, offset: int) -> int:
 
 
 def read_bytes(path: Path, offset: int, length: int) -> bytes:
+    if offset < 0 or length < 0 or length > COPY_CHUNK:
+        raise DecryptError("invalid bounded header read")
     with open(path, "rb", buffering=0) as file:
         file.seek(offset)
         data = file.read(length)
@@ -399,6 +468,8 @@ def read_bytes(path: Path, offset: int, length: int) -> bytes:
 
 
 def read_into(reader, offset: int, length: int) -> bytes:  # type: ignore[no-untyped-def]
+    if offset < 0 or length < 0 or length > COPY_CHUNK:
+        raise DecryptError("invalid bounded container read")
     reader.seek(offset)
     data = reader.read(length)
     if len(data) < length:

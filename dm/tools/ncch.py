@@ -97,8 +97,8 @@ class PartitionInfo:
 
     @property
     def encrypted(self) -> bool:
-        """True when reading section data needs a derived key (survives neither FixedKey nor NoCrypto)."""
-        return not (self.fixed_key or self.no_crypto)
+        """True when section data is encrypted, including public FixedKey crypto."""
+        return not self.no_crypto
 
 
 @dataclass
@@ -169,7 +169,15 @@ def parse_card_image(path: Path) -> tuple[str, PartitionInfo, int]:
     if len(header) < 0x160 or header[0x100:0x104] != b"NCSD":
         raise ContainerError(f"{path.name}: not an NCSD card image")
     media_units = struct.unpack_from("<I", header, 0x104)[0]
-    part_offset, part_size = struct.unpack_from("<II", header, 0x120)
+    table = struct.unpack_from("<16I", header, 0x120)
+    file_size = path.stat().st_size
+    end = 0x200
+    for offset, length in sorted((table[i] * MEDIA_UNIT, table[i + 1] * MEDIA_UNIT)
+                                 for i in range(0, 16, 2) if table[i + 1]):
+        if offset < end or length < NCCH_HEADER_SIZE or offset + length > file_size:
+            raise ContainerError("NCSD partition has invalid bounds or overlaps another partition")
+        end = offset + length
+    part_offset, part_size = table[:2]
     base, size = part_offset * MEDIA_UNIT, part_size * MEDIA_UNIT
     partition = parse_ncch_header(path, base, size)
     title_id = f"{partition.program_id & 0xFFFF_FFFF_FFFF_FFFF:016x}"
@@ -177,9 +185,19 @@ def parse_card_image(path: Path) -> tuple[str, PartitionInfo, int]:
 
 
 def parse_ncch_header(path: Path, base: int, size: int) -> PartitionInfo:
+    if base < 0 or size < NCCH_HEADER_SIZE or base + size > path.stat().st_size:
+        raise ContainerError("NCCH partition exceeds file bounds")
     header = _read_exact(path, base, NCCH_HEADER_SIZE)
     if len(header) < 0x1B8:
         raise ContainerError(f"{path.name}: truncated NCCH header")
+    if header[0x100:0x104] == b"NCCH":
+        content_size = struct.unpack_from("<I", header, 0x104)[0] * MEDIA_UNIT
+        if content_size < NCCH_HEADER_SIZE or content_size > size:
+            raise ContainerError("NCCH content size exceeds partition bounds")
+        for offset in (0x190, 0x198, 0x1A0, 0x1B0):
+            start, length = struct.unpack_from("<II", header, offset)
+            if length and (start < 1 or (start + length) * MEDIA_UNIT > content_size):
+                raise ContainerError("NCCH region exceeds content bounds")
     product_code = header[0x150:0x160].decode("ascii", errors="replace").rstrip("\x00 \t\r\n")
     return PartitionInfo(
         index=0,
@@ -216,7 +234,10 @@ def read_exefrs_file(
             f"{path.name}: ExeFS is encrypted ({'FixedKey' if partition.fixed_key else 'standard crypto'})"
             " and no decryption was provided (--boot9 or a keys file)"
         )
-    if partition.exefs_offset * MEDIA_UNIT + partition.exefs_size * MEDIA_UNIT > partition.size:
+    if (partition.base < 0 or partition.base + partition.size > path.stat().st_size
+            or partition.exefs_offset * MEDIA_UNIT < NCCH_HEADER_SIZE
+            or partition.exefs_size * MEDIA_UNIT < EXEFS_HEADER_SIZE
+            or partition.exefs_offset * MEDIA_UNIT + partition.exefs_size * MEDIA_UNIT > partition.size):
         raise ContainerError("ExeFS exceeds partition bounds")
     exefs_base = partition.base + partition.exefs_offset * MEDIA_UNIT
     header = _read_exact(path, exefs_base, EXEFS_HEADER_SIZE)
@@ -224,18 +245,30 @@ def read_exefrs_file(
         raise ContainerError(f"{path.name}: truncated ExeFS header")
     if partition.encrypted:
         header = (decrypt or (lambda offset, data: data))(partition.exefs_offset * MEDIA_UNIT, header)
-    for section_number in range(8):
-        entry = header[section_number * 16 : (section_number + 1) * 16]
+    sections = []
+    for section_number in range(10):
+        entry = header[section_number * 16:(section_number + 1) * 16]
         sec_name = entry[:8].decode("ascii", errors="replace").rstrip("\x00")
         sec_offset, sec_size = struct.unpack_from("<II", entry, 8)
-        if sec_name != name:
+        if not sec_size:
             continue
-        if EXEFS_HEADER_SIZE + sec_offset + sec_size > partition.exefs_size * MEDIA_UNIT:
-            raise ContainerError("ExeFS section exceeds region bounds")
+        if (not sec_name or sec_offset % 16
+                or EXEFS_HEADER_SIZE + sec_offset + sec_size > partition.exefs_size * MEDIA_UNIT):
+            raise ContainerError("ExeFS section has invalid alignment or exceeds region bounds")
+        sections.append((sec_offset, sec_size, sec_name))
+    if len({section_name for _, _, section_name in sections}) != len(sections):
+        raise ContainerError("duplicate ExeFS section name")
+    end = 0
+    for sec_offset, sec_size, _ in sorted(sections):
+        if sec_offset < end:
+            raise ContainerError("overlapping ExeFS sections")
+        end = sec_offset + sec_size
+    matches = [(offset, size) for offset, size, section_name in sections if section_name == name]
+    if len(matches) > 1:
+        raise ContainerError("duplicate ExeFS section name")
+    for sec_offset, sec_size in matches:
         file_base = partition.exefs_offset * MEDIA_UNIT + EXEFS_HEADER_SIZE + sec_offset
         data = _read_exact(path, partition.base + file_base, sec_size)
-        if len(data) < sec_size:
-            raise ContainerError(f"{path.name}: truncated ExeFS section {name!r}")
         if partition.encrypted:
             data = (decrypt or (lambda offset, blob: blob))(file_base, data)
         return data
