@@ -36,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
             with TemporaryDirectory(prefix='ctr-native-window-test-') as directory:
                 root = Path(directory)
                 env = dict(os.environ)
-                env.update(HOME=str(root / 'home'), DYLD_LIBRARY_PATH='/opt/homebrew/lib', RUST_LOG='info')
+                env.update(HOME=str(root / 'home'), DYLD_FALLBACK_LIBRARY_PATH='/opt/homebrew/lib', RUST_LOG='info')
                 for key in ('ZAKURO_TEST_COMPANION_GL', 'ZAKURO_TEST_WINDOW_CYCLE', 'ZAKURO_COPY_SCREENS'):
                     env.pop(key, None)
                 env.update(switches)

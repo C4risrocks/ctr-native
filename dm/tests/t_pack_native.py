@@ -60,3 +60,30 @@ class TestNativePack(unittest.TestCase):
             self.assertFalse(build())
             pack_app.verify_bundle(app, [Path('Contents/MacOS/zakuro-host'),
                                         Path('Contents/Resources/game/synthetic.dylib')])
+
+    def test_launcher_imageio_uses_system_png_decoder(self):
+        # Decode through Apple's actual ImageIO API inside the generated launcher.
+        # A global Homebrew DYLD_LIBRARY_PATH causes SIGBUS here on macOS.
+        with TemporaryDirectory(prefix='ctr-imageio-test-') as folder:
+            root = Path(folder)
+            source = root / 'decode.c'
+            source.write_text(
+                '#include <ImageIO/ImageIO.h>\n#include <string.h>\n'
+                'int main(int argc,char **argv) { char *p=argv[argc-1]; '
+                'CFURLRef u=CFURLCreateFromFileSystemRepresentation(0,'
+                '(const UInt8*)p,strlen(p),0); '
+                'CGImageSourceRef s=CGImageSourceCreateWithURL(u,0); '
+                'if(!s)return 2; CGImageRef i=CGImageSourceCreateImageAtIndex(s,0,0); '
+                'if(!i)return 3; CGImageRelease(i); CFRelease(s); CFRelease(u); return 0; }')
+            host = root / 'decode'
+            subprocess.run(['/usr/bin/clang', str(source), '-framework', 'ImageIO',
+                            '-framework', 'CoreFoundation', '-framework', 'CoreGraphics',
+                            '-o', str(host)], check=True, capture_output=True)
+            png = root / 'synthetic.png'
+            png.write_bytes(pack_app.png_bytes([(255, 0, 0, 255)] * 256, 16, 16))
+            launcher = root / 'launch'
+            launcher.write_text(pack_app.launcher_text(host, png, root / 'data',
+                                                       'en', 'test', root / 'unused.dylib'))
+            launcher.chmod(0o755)
+            result = subprocess.run([str(launcher)], capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))

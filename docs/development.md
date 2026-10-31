@@ -124,3 +124,11 @@ The runner enables synchronization validation and fails on validation errors or
 missing GPU-sharing evidence, even when the host exit code is zero. The exact
 selected GPU image/crop readback also has an ignored-by-default live-GPU Rust
 regression; run it explicitly when a Vulkan loader and GPU are available.
+
+### macOS image decoding and Vulkan lookup
+
+Launchers and smoke tests use `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib`
+for the Homebrew Vulkan loader. Do not use `DYLD_LIBRARY_PATH` for this:
+it overrides system dependencies and makes Apple's ImageIO PNG decoder crash
+with SIGBUS when AppKit loads menu icons. The native packaging tests decode a
+manufactured PNG through ImageIO inside the generated launcher to guard this.

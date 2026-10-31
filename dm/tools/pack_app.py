@@ -137,9 +137,10 @@ def launcher_text(host_bin: Path, rom_path: Path, sandbox_dir: Path,
     ]
     scale_arg = (" --scale " + str(scale)) if scale else ""
     lines = [*header,
-        'DYLD_LIBRARY_PATH="/opt/homebrew/lib'
-        '${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"',
-        "export DYLD_LIBRARY_PATH",
+        # Use fallback lookup: overriding Apple codecs breaks ImageIO/menu icons.
+        'DYLD_FALLBACK_LIBRARY_PATH="/opt/homebrew/lib'
+        '${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"',
+        "export DYLD_FALLBACK_LIBRARY_PATH",
         f'RECOMPILED={quote(recompiled_dylib)}',
         'exec "$HOST_BIN" --recompiled "$RECOMPILED"'
         f"{scale_arg} --language {language} \"$ROM\"",

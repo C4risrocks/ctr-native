@@ -392,7 +392,7 @@ def launch_stage(app: Path, state: progress_module.StageState,
 
     env = dict(_os.environ)
     env["HOME"] = str(pack_app.sandbox_of(app)["home"])
-    env["DYLD_LIBRARY_PATH"] = "/opt/homebrew/lib"
+    env["DYLD_FALLBACK_LIBRARY_PATH"] = "/opt/homebrew/lib"
     zakuro_bin = app / "Contents/MacOS/zakuro-host"
     headless_run = subprocess.run(
         [str(zakuro_bin), "--headless", "120", "--mute", "--recompiled",
