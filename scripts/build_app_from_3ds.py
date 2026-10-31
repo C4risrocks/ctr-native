@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import subprocess
 import sys
 import time
 import traceback
@@ -54,7 +55,7 @@ from dm.tools.ncch import (  # noqa: E402
     Smdh,
 )
 
-TOOLKIT_VERSION = "ctr-native 0.1.0"
+TOOLKIT_VERSION = "ctr-native 0.2.0"
 LANGUAGE_REGION = {
     "ja": 0, "en": 1, "fr": 2, "de": 3, "it": 4, "es": 5,
     "zh-Hans": 6, "ko": 7, "nl": 8, "pt": 9, "ru": 10, "zh-Hant": 11,
@@ -96,19 +97,29 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def positive_int(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("scale must be a positive integer") from error
+    if number < 1:
+        raise argparse.ArgumentTypeError("scale must be a positive integer")
+    return number
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Pack a 3DS dump into a per-game Mac app (ctr-native).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__.splitlines()[1].strip(),
     )
-    parser.add_argument("game", help="a game folder (card images and/or CIAs) or one file")
+    parser.add_argument("game", help="a folder of .3ds/.3dz/.cci card images, or one card image")
     parser.add_argument("-o", "--output", default=None, help="where the .app lands")
     parser.add_argument("--zakuro-bin", default=None, type=Path,
                         help="path to the zakuro binary (default: vendors/zakuro/target/release/zakuro)")
     parser.add_argument("--app-name", default=None)
     parser.add_argument("--language", default="en", choices=sorted(LANGUAGE_REGION))
-    parser.add_argument("--scale", default=None, type=int,
+    parser.add_argument("--scale", default=3, type=positive_int,
                         help="window scale, times the console's size (default: 3)")
     parser.add_argument("--no-icon", action="store_true")
     parser.add_argument("--allow-damaged", action="store_true")
@@ -123,56 +134,45 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def run(args: argparse.Namespace, progress: progress_module.Progress) -> bool:
-    source = Path(args.game).expanduser().resolve()
-    if not source.exists():
-        progress.say(f"{source} does not exist", error=True)
-        return False
-    candidates = list(ncch.find_game_files(source))
-    packable = [c for c in candidates if c.kind == "card image"]
-    if not packable:
-        progress.say("no card image (.3ds/.cci) found — CIAs arrive in a later build",
-                     error=True)
-        for candidate in candidates:
-            progress.step(progress.stage(0, 1, "discover"), f"{candidate.path.name}: {candidate.kind}")
-        return False
-    if len(packable) > 1:
-        progress.say(f"{len(packable)} games in the folder; building the first ({packable[0].path.name})")
-
-    chosen = packable[0]
-    stages_total = 6
+    stages_total = 7
+    state = progress.stage(1, stages_total, "discover")
     game_build = None
     try:
-        state = progress.stage(1, stages_total, "find the game", hint=chosen.path.name)
+        source = Path(args.game).expanduser().resolve()
+        if not source.exists():
+            raise BuildFailed(f"{source} does not exist")
+        candidates = list(ncch.find_game_files(source))
+        packable = [candidate for candidate in candidates if candidate.kind == "card image"]
+        if not packable:
+            raise BuildFailed("no card image (.3ds/.3dz/.cci) found; CIA packaging is not supported")
+        chosen = packable[0]
+        if len(packable) > 1:
+            progress.say(f"{len(packable)} games found; building the first ({chosen.path.name})")
+        progress.stage_end(state, chosen.path.name)
+        state = progress.stage(2, stages_total, "identify")
         game_build = identify_game(chosen, state, progress, args)
-
-        state = progress.stage(2, stages_total, "verify the dump")
+        state = progress.stage(3, stages_total, "verify the dump")
         verify_hash(game_build, state, progress, args)
-
+        state = progress.stage(4, stages_total, "decrypt a working copy")
         rom_for_app = game_build.source
         if not game_build.partition.no_crypto:
-            state = progress.stage(3, stages_total, "decrypt a working copy", hint="--boot9")
             rom_for_app = decrypt_stage(game_build, state, progress, args)
             game_build.working_source = rom_for_app
             _, game_build.partition, _ = ncch.parse_card_image(rom_for_app)
-            stages_total = 7
-            state = progress.stage(4, stages_total, "finish the copy")
-            progress.stage_end(state, "done")
-
-        language = args.language
-        state = progress.stage(3 if stages_total == 6 else 5, stages_total, "make the icon")
+        else:
+            progress.stage_end(state, "NoCrypto: no working copy needed")
+        state = progress.stage(5, stages_total, "make the icon")
         icon_pixels = icon_stage(game_build, state, progress, args)
-
-        state = progress.stage(4 if stages_total == 6 else 6, stages_total, "pack the app")
-        app = pack_stage(game_build, state, progress, args,
-                         language=language, rom_for_app=rom_for_app,
-                         icon_pixels=icon_pixels)
-
-        state = progress.stage(5 if stages_total == 6 else 7, stages_total, "verify the app")
+        state = progress.stage(6, stages_total, "pack the app")
+        app = pack_stage(game_build, state, progress, args, language=args.language,
+                         rom_for_app=rom_for_app, icon_pixels=icon_pixels)
+        state = progress.stage(7, stages_total, "verify the app")
         launch_stage(app, state, progress, args)
-    except (ContainerError, DecryptError, BuildFailed, pack_app.PackError, OSError) as error:
+    except (ContainerError, DecryptError, BuildFailed, pack_app.PackError,
+            OSError, ValueError, subprocess.SubprocessError) as error:
+        progress.stage_end(state, str(error), ok=False)
         progress.say(str(error), error=True)
         if args.progress == "json":
-            progress.say("-" * 40, error=True)
             for line in traceback.format_exc().splitlines():
                 progress.say(line, error=True)
         return False
@@ -232,16 +232,6 @@ def verify_hash(build: Build, state: progress_module.StageState,
         progress.stage_end(state, "MD5 verified against the profile pin")
 
 
-def pick_language(build: Build, language: str, progress: progress_module.Progress) -> str:
-    smdh = load_smdh(build)
-    available = ncch.available_languages(smdh)
-    if language in available:
-        return language
-    fallback = available[0] if available else "en"
-    progress.say(f"language {language} is not on this card (SMDH: {', '.join( available)}); using {fallback!r}")
-    return fallback
-
-
 def load_smdh(build: Build) -> Smdh:
     rom = build.working_source or build.source
     smdh_raw = ncch.read_exefrs_file(rom, build.partition, "icon")
@@ -296,8 +286,9 @@ def pack_stage(build: Build, state: progress_module.StageState, progress: progre
     app_output_dir.mkdir(parents=True, exist_ok=True)
     smdh = load_smdh(build)
     lang_index = LANGUAGE_REGION[language]
-    long_title = smdh.titles.get(lang_index, (smdh.titles.get(1) or next(iter(smdh.titles.values()))))[1]
-    app_name = args.app_name or pack_app.app_name_from_smdh(long_title)
+    title = smdh.titles.get(lang_index) or smdh.titles.get(1) or next(iter(smdh.titles.values()), ())
+    long_title = (title[1] or title[0]) if title else "Game"
+    app_name = pack_app.app_name_from_smdh(args.app_name or long_title)
     # \n inside titles (a legal SMDH break) is not legal in a Finder name.
     app_name = app_name.replace("\n", " - ").strip()
     app_path = app_output_dir / f"{app_name}.app"
@@ -374,11 +365,6 @@ def pack_stage(build: Build, state: progress_module.StageState, progress: progre
             f"profile\tpin in dm/games/{build.title_id}/profile.tsv",
         ]) + "\n"
     )
-    if args.launch:
-        progress.step(state, "opening the app")
-        import subprocess
-
-        subprocess.run(["/usr/bin/open", str(app_path)], check=True)
     return app_path
 
 
@@ -401,8 +387,6 @@ def launch_stage(app: Path, state: progress_module.StageState,
         return
     import os as _os
     import shlex
-    import subprocess
-
     launcher_text_file = (app / "Contents/MacOS/ctr-native").read_text()
     rom = None
     for line_text in launcher_text_file.splitlines():
@@ -418,13 +402,14 @@ def launch_stage(app: Path, state: progress_module.StageState,
     zakuro_bin = app / "Contents/MacOS/zakuro-host"
     headless_run = subprocess.run(
         [str(zakuro_bin), "--headless", "120", "--mute", "--recompiled",
-         str(rom_dylib_path(app)), str(rom)],
+         str(rom_dylib_path(app)), "--language", args.language, "--scale", str(args.scale), str(rom)],
         env=env, capture_output=True, text=True, timeout=180,
     )
     output = headless_run.stdout + headless_run.stderr
     progress.count(state, 1, 1, "smoke")
-    if "Completed after" in output:
+    if headless_run.returncode == 0 and "Completed after" in output:
         speed_note = output.strip().splitlines()[-2].strip() if len(output.splitlines()) > 1 else ""
+        subprocess.run(["/usr/bin/open", str(app)], check=True, capture_output=True)
         progress.stage_end(state, f"headless smoke passed · host zakuro ({speed_note[:60]})")
         return
     raise BuildFailed(f"headless smoke failed:\n{output[-800:]}")
@@ -432,7 +417,10 @@ def launch_stage(app: Path, state: progress_module.StageState,
 
 def rom_dylib_path(app: Path) -> Path:
     """The bundle's own copy of the game's AOT library (self-contained)."""
-    return next(iter((app / "Contents/Resources/game").glob("*.dylib")))
+    libraries = list((app / "Contents/Resources/game").glob("*.dylib"))
+    if len(libraries) != 1:
+        raise BuildFailed("the bundle must contain exactly one AOT library")
+    return libraries[0]
 
 
 if __name__ == "__main__":

@@ -6,7 +6,8 @@
 *.cia
 *.cxi
 *.cfa
-*.xci  # just in case (not a 3DS format, but never pack it)
+*.xci
+# Switch formats are excluded too.
 *.nsp
 
 # Console keys: your boot9/movable-sed stay on your machine.
@@ -22,6 +23,7 @@ keys.txt
 # *.app/ only matches dirs ending in ".app": bundles are named *.app.ctr-native
 # and hold the user sandbox (saves/logs/caches) - never commit them.
 *.app.ctr-native/
+*.app.ctr-native-legacy/
 *.app.key
 *.idx
 .DS_Store

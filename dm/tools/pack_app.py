@@ -25,13 +25,17 @@ the sandbox holds user data only (saves, logs, shader caches).
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
+import os
+import sys
+import tempfile
 import plistlib
 import shutil
 import subprocess  # codesign/iconutil/sips: macOS tools, fixed paths, no shell
 import time
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from collections.abc import Callable
@@ -134,7 +138,7 @@ def launcher_text(host_bin: Path, rom_path: Path, sandbox_dir: Path,
         "export DYLD_LIBRARY_PATH",
         f'RECOMPILED={quote(recompiled_dylib)}',
         'exec "$HOST_BIN" --recompiled "$RECOMPILED"'
-        f"{scale_arg} \"$ROM\"",
+        f"{scale_arg} --language {language} \"$ROM\"",
     ]
     return "\n".join([*lines, ""])
 
@@ -216,8 +220,6 @@ class IconSet:
             results.append(target)
         if not results:
             return None
-        for clean in iconset_dir.glob("icon_512x512.png"):
-            clean.unlink()
         icns = self.iconset_dir.parent.parent / "AppIcon.icns"
         icns_tmp = icns.with_suffix(".tmp.icns")
         try:
@@ -317,12 +319,86 @@ class PackInputs:
     zakuro_bin: Path | None = None  # the zakuro binary path for the launcher
     recompiled_dylib: Path | None = None  # 3dsrecomp's per-game library (aot)
     scale: int | None = None  # zakuro's --scale (window factor)
+    language: str = "en"
     host_bin_launcher: Path | None = None  # the BUNDLED host copy the launcher execs
     recompiled_dylib_launcher: Path | None = None  # the BUNDLED library copy
 
     @property
     def sandbox_dir(self) -> Path:
         return sandbox_of(self.whom)["sandbox"]
+
+
+def effective_launcher(inputs: PackInputs) -> str:
+    return launcher_text(
+        inputs.host_bin_launcher or inputs.host_bin, inputs.rom_path, inputs.sandbox_dir,
+        inputs.language, inputs.toolkit_version,
+        inputs.recompiled_dylib_launcher or inputs.recompiled_dylib, inputs.scale,
+    )
+
+
+def verify_bundle(app: Path, required: list[Path]) -> None:
+    """Validate the seal and each executable rather than trusting the reuse marker."""
+    for relative in [Path("Contents/MacOS") / LAUNCHER_NAME, Path("Contents/Info.plist"), *required]:
+        path = app / relative
+        linked = any(one.is_symlink() for one in [path, *path.parents] if one == app or app in one.parents)
+        if not path.is_file() or linked:
+            raise PackError(f"missing or linked bundle dependency: {relative}")
+    executables = [app / rel for rel in required if rel.suffix == ".dylib" or rel.name.endswith("-host")]
+    for target in [*executables, app]:
+        result = subprocess.run(["/usr/bin/codesign", "--verify", "--strict", str(target)],
+                                capture_output=True, text=True)
+        if result.returncode:
+            raise PackError(f"signature verification failed: {target.name}: {result.stderr.strip()}")
+
+
+def publish_bundle(candidate: Path, app: Path) -> None:
+    """Publish on the same filesystem; an existing bundle is exchanged atomically."""
+    if not app.exists():
+        candidate.replace(app)
+        return
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == "darwin":
+        rename = libc.renamex_np
+        rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        result = rename(os.fsencode(candidate), os.fsencode(app), 2)  # RENAME_SWAP
+    elif sys.platform.startswith("linux") and hasattr(libc, "renameat2"):
+        rename = libc.renameat2
+        rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        result = rename(-100, os.fsencode(candidate), -100, os.fsencode(app), 2)  # RENAME_EXCHANGE
+    else:
+        raise PackError("atomic directory exchange is unavailable on this platform")
+    if result:
+        raise OSError(ctypes.get_errno(), "atomic bundle exchange failed", str(app))
+
+
+def migrate_legacy(app: Path) -> bool:
+    """Create missing data only; preserve the old bundle as an explicit legacy archive."""
+    legacy = app / "Contents/MacOS/sandbox"
+    if not legacy.exists():
+        return False
+    from .user_data import runtime_in_use
+
+    if runtime_in_use(app):
+        raise PackError("close the app before migrating its legacy sandbox")
+    archive = app.with_name(app.name + ".ctr-native-legacy")
+    if archive.exists():
+        raise PackError(f"legacy archive already exists: {archive}; merge it manually first")
+    root = sandbox_of(app)["sandbox"]
+    entries = list(legacy.rglob("*"))
+    if legacy.is_symlink() or any(path.is_symlink() for path in entries):
+        raise PackError("legacy sandbox contains links; manual migration is required")
+    files = [path for path in entries if path.is_file()]
+    for path in entries:
+        target = root / path.relative_to(legacy)
+        if target.is_symlink() or (target.exists() and (path.is_file() or not target.is_dir())):
+            raise PackError(f"sandbox collision: {target}; both copies were preserved")
+    for source in files:
+        target = root / source.relative_to(legacy)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with source.open("rb") as reader, target.open("xb") as writer:
+            shutil.copyfileobj(reader, writer)
+        shutil.copystat(source, target)
+    return True
 
 
 def pack(
@@ -337,97 +413,89 @@ def pack(
     sign_identity: str = "-",
     say: Callable[[str], None] = print,
 ) -> bool:
-    """Build or refresh `app`; returns True when it came from the reuse key."""
-    contents = contents_of(app)
-    macos, resources = contents / "MacOS", contents / "Resources"
-    key_path = resources / "ctr-native" / KEY_NAME
-    signature = pack_inputs_hash(inputs, icon_pixels)
-
-    if app.exists() and key_path.exists() and key_path.read_text().strip() == signature:
-        say(f"app packed (inputs unchanged): {app.name}")  # sandbox untouched: saves stay
-        return True
-    started = time.monotonic()
-
-    legacy = contents_of(app) / "MacOS" / "sandbox"
-    if legacy.exists():
-        moved = sandbox_of(app)["sandbox"]
-        moved.mkdir(parents=True, exist_ok=True)
-        for source_dir in list(legacy.iterdir()):
-            destination = moved / source_dir.name
-            destination.mkdir(parents=True, exist_ok=True)
-            for entry in source_dir.rglob("*"):
-                destination_dir = destination / entry.relative_to(source_dir)
-                if entry.is_dir():
-                    destination_dir.mkdir(parents=True, exist_ok=True)
-            for file in [entry for entry in source_dir.rglob("*") if entry.is_file()]:
-                destination_file = destination / file.relative_to(source_dir)
-                destination_file.parent.mkdir(parents=True, exist_ok=True)
-                if destination_file.exists():
-                    raise PackError(f"sandbox collision: {destination_file}")
-                shutil.copy2(file, destination_file)
-        # Preserve the legacy tree until migration is explicitly confirmed.
-    ensure_sandbox(app)
-    extra: list[tuple[Path, Path]] = list(inputs.extra_files or [])
-    for source, target in extra:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
-        (target).chmod(0o755) if source.suffix in {".dylib", ""} or source.name in ("zakuro", "ctr-native") else None
-    icon_file: Path | None = None
-    if icon_pixels:
-        iconset = IconSet(resources / "ctr-native" / "iconset")
-        icon_file = iconset.refresh(icon_pixels, icon_size[0], icon_size[1])
-
-    launch_bin = inputs.host_bin_launcher or inputs.host_bin
-    launch_dylib = inputs.recompiled_dylib_launcher or inputs.recompiled_dylib
-    write_atomic(macos / LAUNCHER_NAME, launcher_text(
-        launch_bin, inputs.rom_path, sandbox_of(app)["sandbox"],
-        language, inputs.toolkit_version,
-        launch_dylib, inputs.scale,
-    ).encode())
-    (macos / LAUNCHER_NAME).chmod(0o755)
-    write_atomic(contents / "Info.plist", info_plist(app_name, app_bundle_id(title_id), version))
-
-    overlay_dir = resources / "ctr-native"
-    overlay_dir.mkdir(parents=True, exist_ok=True)
-    if icon_file is not None:
-        write_atomic(overlay_dir / "icon.stamp", signature.encode())
-    write_atomic(overlay_dir / KEY_NAME, (signature + "\n").encode())
-    write_atomic(overlay_dir / "inputs.tsv", "".join(
-        f"{line}\n" for line in [
-            f"host_version\t{inputs.host_version}",
-            f"toolkit_version\t{inputs.toolkit_version}",
-            f"language\t{language}",
-            f"profile_hash\t{inputs.profile_hash}",
-            f"appid\t{app_bundle_id(title_id)}",
-            f"icon\t{'yes' if icon_pixels else 'SMDH-missing'}",
-        ]).encode())
-
+    """Sign and verify a fresh candidate before publishing it as a single transaction."""
+    if app.is_symlink():
+        raise PackError("the bundle destination must not be a symbolic link")
+    if inputs.scale is not None and inputs.scale < 1:
+        raise PackError("scale must be positive")
+    if language not in {"ja", "en", "fr", "de", "it", "es", "zh-Hans", "ko", "nl", "pt", "ru", "zh-Hant"}:
+        raise PackError("unsupported language")
+    inputs = replace(inputs, whom=app, language=language)
+    extra = list(inputs.extra_files or [])
+    required: list[Path] = []
     for _source, target in extra:
-        if target.suffix in {".dylib"} or target.name.endswith("-host"):
-            sign_executable(target, sign_identity)
-    codesign(app, sign_identity, say=say)
-    say(f"app packed in {int(time.monotonic() - started)}s: {app}")
-    return False
+        try:
+            relative = target.relative_to(app)
+        except ValueError as error:
+            raise PackError("an extra file destination is outside the app") from error
+        if ".." in relative.parts or relative in required:
+            raise PackError("invalid or duplicate extra file destination")
+        required.append(relative)
+    if icon_pixels:
+        required.append(Path("Contents/Resources/AppIcon.icns"))
+    signature = schema_hash({
+        "inputs": pack_inputs_hash(inputs, icon_pixels), "name": app_name,
+        "title_id": title_id, "version": version, "icon_size": repr(icon_size), "identity": sign_identity,
+    })
+    key = app / "Contents/Resources/ctr-native" / KEY_NAME
+    if app.exists() and key.is_file() and key.read_text().strip() == signature:
+        try:
+            verify_bundle(app, required)
+        except PackError:
+            pass  # changed or incomplete bundles are rebuilt from verified inputs
+        else:
+            say(f"app packed (inputs unchanged, signatures verified): {app.name}")
+            return True
+    app.parent.mkdir(parents=True, exist_ok=True)
+    candidate = Path(tempfile.mkdtemp(prefix=f".{app.stem}-", suffix=".app", dir=app.parent))
+    started = time.monotonic()
+    try:
+        contents = contents_of(candidate)
+        macos, resources = contents / "MacOS", contents / "Resources"
+        for source, target in extra:
+            staged = candidate / target.relative_to(app)
+            staged.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, staged)
+            if target.suffix == ".dylib" or target.name.endswith("-host"):
+                staged.chmod(0o755)
+        if icon_pixels and IconSet(resources / "ctr-native/iconset").refresh(icon_pixels, *icon_size) is None:
+            raise PackError("icon generation failed")
+        write_atomic(macos / LAUNCHER_NAME, effective_launcher(inputs).encode())
+        (macos / LAUNCHER_NAME).chmod(0o755)
+        write_atomic(contents / "Info.plist", info_plist(app_name, app_bundle_id(title_id), version))
+        overlay = resources / "ctr-native"
+        write_atomic(overlay / KEY_NAME, (signature + "\n").encode())
+        write_atomic(overlay / "inputs.tsv", "".join(f"{key}\t{value}\n" for key, value in {
+            "host_version": inputs.host_version, "toolkit_version": inputs.toolkit_version,
+            "language": language, "scale": inputs.scale, "profile_hash": inputs.profile_hash,
+            "appid": app_bundle_id(title_id), "rom_path": inputs.rom_path,
+        }.items()).encode())
+        for _source, target in extra:
+            if target.suffix == ".dylib" or target.name.endswith("-host"):
+                sign_executable(candidate / target.relative_to(app), sign_identity)
+        codesign(candidate, sign_identity, say=say)
+        verify_bundle(candidate, required)
+        legacy = migrate_legacy(app)
+        ensure_sandbox(app)
+        publish_bundle(candidate, app)
+        if legacy:
+            candidate.replace(app.with_name(app.name + ".ctr-native-legacy"))
+        say(f"app packed in {int(time.monotonic() - started)}s: {app}")
+        return False
+    finally:
+        shutil.rmtree(candidate, ignore_errors=True)
 
 
 def pack_inputs_hash(inputs: PackInputs, icon_pixels: list[tuple[int, int, int, int]] | None) -> str:
-    host_bin = inputs.zakuro_bin or inputs.host_bin
-    launch_bin = inputs.host_bin_launcher or inputs.host_bin
+    """Versioned content fingerprint; timestamps are not evidence of unchanged inputs."""
     return schema_hash({
-        "rom": hash_file(inputs.rom_path),
-        "host_bin": file_stamp(host_bin),
-        "profile": inputs.profile_hash,
-        "toolkit": inputs.toolkit_version,
-        "launcher": schema_hash({
-            "text": launcher_text(launch_bin, inputs.rom_path,
-                                  inputs.sandbox_dir, "en", inputs.toolkit_version,
-                                  inputs.recompiled_dylib_launcher, None),
-        }),
-        "extra_files": schema_hash({
-            f"{source.name}@{file_stamp(source)}": str(target)
-            for source, target in (inputs.extra_files or [])
-        }),
-        "launcher_args": schema_hash({str(index): value for index, value in enumerate(inputs.launcher_args)}),
+        "format": "2", "rom": hash_file(inputs.rom_path),
+        "host": hash_file(inputs.zakuro_bin or inputs.host_bin),
+        "aot": hash_file(inputs.recompiled_dylib) if inputs.recompiled_dylib else "none",
+        "profile": inputs.profile_hash, "toolkit": inputs.toolkit_version,
+        "launcher": effective_launcher(inputs),
+        "extra_files": schema_hash({str(target): hash_file(source) for source, target in (inputs.extra_files or [])}),
+        "launcher_args": repr(inputs.launcher_args),
         "icon": hashlib.sha256(repr(icon_pixels).encode()).hexdigest(),
     })
 
