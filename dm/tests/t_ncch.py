@@ -29,7 +29,7 @@ class TestCardImage(ToolCase):
         self.assertEqual(partition.product_code, "CTR-P-TSTM")
         self.assertTrue(partition.no_crypto)
         self.assertFalse(partition.encrypted)
-        self.assertEqual(partition.exefs_offset, 4)
+        self.assertEqual(partition.exefs_offset, 6)
 
     def test_exefs_icon_and_smdh(self) -> None:
         icon_src = synthetic_icon(48)

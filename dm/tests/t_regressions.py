@@ -21,8 +21,8 @@ class IntegrityRegressions(unittest.TestCase):
             payload = bytearray(card.read_bytes())
             struct.pack_into("<I", payload, 0x124, 1)
             card.write_bytes(payload)
-            _, partition, _ = ncch.parse_card_image(card)
             with self.assertRaises(ncch.ContainerError):
+                _, partition, _ = ncch.parse_card_image(card)
                 ncch.read_exefrs_file(card, partition, "icon")
 
     def test_plain_partition_uses_ncch_magic_at_correct_offset(self):
@@ -52,3 +52,30 @@ class IntegrityRegressions(unittest.TestCase):
                 source.write_bytes(payload)
                 self.assertEqual(decrypt.load_key_x_table(decrypt.KeySource(boot9=source)),
                                  {0x2C: bytes(range(16))})
+
+    def test_all_ten_exefs_slots_are_supported(self):
+        payload = bytearray(build_cxi_partition())
+        payload[0xC00 + 9 * 16:0xC00 + 10 * 16] = payload[0xC10:0xC20]
+        payload[0xC10:0xC20] = bytes(16)
+        with TemporaryDirectory() as folder:
+            card = build_card_image(payload, Path(folder) / "synthetic.3ds")
+            _, partition, _ = ncch.parse_card_image(card)
+            self.assertTrue(ncch.read_exefrs_file(card, partition, "icon").startswith(b"SMDH"))
+
+    def test_overlapping_and_unaligned_exefs_sections_are_rejected(self):
+        for offset in (1, 16):
+            with self.subTest(offset=offset), TemporaryDirectory() as folder:
+                payload = bytearray(build_cxi_partition())
+                struct.pack_into("<I", payload, 0xC10 + 8, offset)
+                card = build_card_image(payload, Path(folder) / "synthetic.3ds")
+                _, partition, _ = ncch.parse_card_image(card)
+                with self.assertRaises(ncch.ContainerError):
+                    ncch.read_exefrs_file(card, partition, "icon")
+
+    def test_fixed_key_is_encrypted_even_without_console_secrets(self):
+        with TemporaryDirectory() as folder:
+            card = build_card_image(build_cxi_partition(flag_byte=1), Path(folder) / "synthetic.3ds")
+            _, partition, _ = ncch.parse_card_image(card)
+            self.assertTrue(partition.encrypted)
+            with self.assertRaises(ncch.EncryptedPartition):
+                ncch.read_exefrs_file(card, partition, "icon")
