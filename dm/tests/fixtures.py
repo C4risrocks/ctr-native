@@ -140,7 +140,7 @@ def build_cxi_partition(
     return bytes(body)
 
 
-def build_card_image(partition: bytes, out: Path) -> Path:
+def build_card_image(partition: bytes | bytearray, out: Path) -> Path:
     """Wrap one CXI into an NCSD card image with the partition at media unit 2."""
     media_count = (0x400 + len(partition)) // MEDIA_UNIT
     if (0x400 + len(partition)) % MEDIA_UNIT:
@@ -211,7 +211,8 @@ def encrypted_partition(*, fixed: bool = False, shuffled: bool = False, version:
 def synthetic_aes_ctr(key: bytes, counter: bytes, payload: bytes) -> bytes:
     """AES for synthetic fixture generation, with no dependency on the code under test."""
     try:
-        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        # Optional dependency; OpenSSL is the independent fallback below.
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes  # type: ignore[reportMissingImports]
     except ModuleNotFoundError:
         import subprocess
 

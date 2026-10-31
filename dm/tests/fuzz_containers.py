@@ -68,7 +68,7 @@ def run_mutations(iterations: int = 500, seed: int = 0) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "Bounded synthetic mutation corpus").splitlines()[0])
     parser.add_argument("--iterations", type=int, default=500)
     parser.add_argument("--seed", type=int, default=0)
     arguments = parser.parse_args()

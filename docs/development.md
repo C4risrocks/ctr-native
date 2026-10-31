@@ -1,73 +1,126 @@
-# How ctr-native works
+# Build pipeline and maintenance
 
-The pack pipeline (`scripts/build_app_from_3ds.py`) has five stages; each one
-has a stage log, an input key, and a JSON progress mode, mirroring experiment
-carrier `build_ipa_from_nsp.py`'s layout:
+Python 3.12+ orchestrates the native macOS bundle. Inputs are the player's
+card image, optional key sources, the pinned zakuro host and an installed
+3dsrecomp AOT library. ROMs, keys and generated game assets never belong in git.
+
+## Reproducible native tools
+
+`vendors.lock.json` records upstream revisions and expected patched Git trees.
+Run `python3 scripts/bootstrap_vendors.py` in a fresh checkout, then:
+
+```sh
+rustup toolchain install 1.99.1 --profile minimal
+cargo +1.99.1 build --manifest-path vendors/zakuro/Cargo.toml --release --locked
+cargo +1.99.1 build --manifest-path vendors/3dsrecomp/Cargo.toml --release --locked
+```
+
+The bootstrap never resets an existing checkout. `--verify-only` checks it.
+Changes to the ignored fork are committed there and exported into the numbered
+patch series; update the locked tree when adding a patch. Rebuild the host
+before building apps that depend on the new `--language` interface.
 
 ## Stages
 
-0. **discover** — `dm/tools/ncch.py::find_game_files` classifies what is in
-   the folder: card images (`.3ds`, `.3dz`, `.cci`) by the `NCSD` magic at
-   0x100, CIAs by the CIA magic, AppleDouble junk quietly skipped, unknown
-   files collected (not read: bounded header reads only).
-1. **identify** — `parse_card_image` reads the partition table (offset/size
-   pairs at 0x120, media units of 0x200) and the CXI header of partition 0:
-   product code (0x150), version (`0x112`), program id (0x118), geo of the
-   plain/logo/ExeFS/RomFS regions, and the NCCH flags byte (0x18F), whose bits
-   decide crypto: bit0 `FixedKey`, bit2 `NoCrypto`, table bit5 `NoCrypto`:
-   the flags that say "no keys needed" or call `--boot9`.
-2. **verify** — when `dm/games/<id>/profile.tsv` pins `verified_md5=`, the
-   whole file streams through MD5 with a progress bar; mismatch stops unless
-   `--allow-damaged`.
-3. **decrypt** (only when needed) — `dm/tools/decrypt.py` writes a copy into
-   `<title id>_build/decrypted/` with: menus groups (ExHeader + ExeFS header +
-   icon/banner: slot 0x2C chain) vs content groups (.code, RomFS: slot by
-   ncchflag[3]); the bootrom key generator `((KeyX rol 2) ⊕ KeyY + C1) ROR 41`;
-   the two CTR schemes (version 0/2 = pid|magic at byte 8; version 1 = the
-   region-relative offset bottom bytes). Output superblock hashes (which
-   Nintendo signs over the cleartext) verify both group keys in the copy.
-4. **icon** — SMDH (at ExeFS `icon` 0x2040/0x24C0) large 48-icon (RGB565,
-   row-major 8x8 Morton tiles — verified against retail icons; 3dbrew's
-   "recursive" note predates their retail layout) → PNG upscales → iconutil.
-5. **pack** — `<name>.app` assembled: Info.plist, ad-hoc codesign, launcher
-   script with **baked absolute paths and a HOME redirection** — the host
-   resolves its paths under `$HOME`, so the launcher points it at the
-   sibling sandbox and every settings/nand/sdmc/cache/log write lands
-   there. Save data stays across rebuilds: the `.key` reuse check never
-   deletes or patches the sandbox.
+Every run reports the same seven stages, numbered 1 through 7:
 
-`--progress json` emits one JSON per line: `stage`/`step`/`progress` with
-`frac`/`eta`, `stage_end`, and `say`. Bars otherwise, plain lines behind
-pipes, `off` only stage start/ends.
+1. **discover** — bounded classification of `.3ds`, `.3dz` and `.cci` inputs.
+   CIA is recognized but cannot be packaged.
+2. **identify** — validate the NCSD/NCCH headers and resolve the title profile.
+3. **verify the dump** — stream the original dump's profile MD5, unless skipped
+   explicitly. The original path remains the identity of the build.
+4. **decrypt a working copy** — skip for NoCrypto; otherwise validate every
+   partition and publish a verified temporary copy atomically. Metadata and
+   icon reads subsequently use this copy and its newly parsed partition.
+5. **make the icon** — decode SMDH, or skip with `--no-icon`. Truncated SMDH is
+   an error; a complete SMDH without titles uses `Game` as the app name.
+6. **pack the app** — assemble a fresh candidate beside the destination, sign
+   each executable and the bundle, verify signatures, then publish atomically.
+7. **verify the app** — with `--launch`, run the bundled host headlessly before
+   opening the app. Nonzero exit, timeout or an unsuccessful smoke stops opening.
 
-## Fases zakuro-macOS (Rust AOT host, 2026-10-30)
+```mermaid
+flowchart LR
+  A[Discover] --> B[Identify] --> C[Verify original]
+  C --> D[Decrypt or skip]
+  D --> E[Read clear metadata and icon]
+  E --> F[Build candidate]
+  F --> G[Sign and verify]
+  G --> H[Atomic publication]
+  H --> I[Optional smoke then open]
+```
 
-F0..F2' verificadas: see `docs/zakuro-macos.md` (measured KPIs). El pipeline del packer
-(+`--host zakuro` default) armó el `.app` autocontenido:
+## Crypto contract
 
-    <name>.app/
-      Contents/MacOS/ctr-native   launcher (paths absolutos, HOME -> sandbox hermana)
-      Contents/MacOS/zakuro-host  baklava binario del host runtime Rust
-      Contents/Resources/game/    <title>.dylib + <title>.hints (AOT 3dsrecomp)
+`--boot9` accepts retail full (64 KiB) and protected-region (32 KiB) dumps and
+extracts the original NCCH slot. `--keys` supplies `slot=hexkey` rows, including
+additional slots required by newer crypto methods. Both may be used together;
+conflicting entries fail. FixedKey applications require neither. Seeded NCCH
+and FixedKey system titles remain unsupported and fail explicitly.
 
-Sandbox hermano `<name>.app.ctr-native/`: settings.toml, savedata, mods,
-cheats, shaders y zakuro.log.
+Partitions/regions/sections must fit their containing ranges and not overlap.
+ExeFS entries are processed by offset, independently of table order. Alignment
+padding, original-key sections, content-key sections and hashes are handled
+separately; bad keys never publish a replacement copy. AES uses `cryptography`
+when installed and the system OpenSSL fallback otherwise.
 
-## Reuse policy
+## Publication, reuse and player data
 
-`<id>_build/` keeps: `decrypted/`, `logs/<stage>.log`. The app's signature
-(`ctr-native.key`) covers the ROM hash, zakuro-host stamp, profile pin,
-toolkit version and launcher text; unchanged inputs skip everything except
-the final code sign. `*` are atomic (tmp+rename); the sandbox is only ever
-created, never updated.
+The versioned content key covers the ROM actually loaded (original or verified working copy),
+source host/AOT/hints, effective launcher, icon pixels, metadata, scale,
+language and destination paths. Reuse additionally checks required files and
+real signatures. Older keys cause one rebuild.
 
-## The native goal (Fase 2 sketch)
+The key is written into the **candidate before signing**. It becomes visible
+at the final destination only when the signed, verified bundle is published.
+Existing directories are exchanged atomically on macOS. A failed copy, signing
+or verification leaves the previous app intact.
 
-- `dm/host`: the envelope resolved toward a CTR host of our own
-  (services: GSP→GPU, DSP path, APT/FS/HID semantics), the nxnative
-  equivalent of a Horizon stand-in but for CTR semantics;
-- CPU: ARM11 (`code.bin`, which our decrypted container already exposes
-  plaintext) translated on stage: dynarmic-backed first (proven), then an
-  static-translated pass keyed per build (the nxnative rewriter shape);
-- GPU: PICA200 shader translation pipeline; capture-first (run once with
-  capture enabled, translate offline, pre-compile to Metal/Vulkan).
+The sibling `<game>.app.ctr-native/` is player data. Builds never write player
+settings. Legacy migration preflights collisions and activity, copies only
+absent files, and retains the previous bundle at
+`<game>.app.ctr-native-legacy/`. A collision requires manual resolution; neither
+copy is overwritten. If archiving fails after publication, the error names the
+retained recovery bundle; it is not deleted.
+
+The launcher exports HOME into that sandbox, passes scale and language
+(defaults 3 and `en`) as execution overrides, and points at the bundle's own
+host/AOT copies and the external ROM. Settings remain owned by the runtime.
+
+## Reporting and tests
+
+`--progress json` writes one JSON event per stdout line: `stage`, `step`,
+`progress`, `stage_end`, `say`. Events carry `k`/`n`; successful runs finish at
+7/7 and failures close their current stage with `ok:false`. `auto` chooses bars
+on a TTY and lines behind a pipe. `off` keeps stage summaries only.
+
+Build metadata is recorded in `<id>_build/logs/pack.tsv`; the builder does not
+promise a separate log file for every stage. Runtime logs live under the
+sandbox's `home/Library/Application Support/zakuro/`. Vulkan caches live under
+`home/Library/Caches/zakuro/pipelines/`.
+
+```sh
+python3 -m unittest discover -s dm/tests -t . -p 't_*.py' -v
+python3 -m dm.tests.fuzz_containers --iterations 2000
+ruff check dm scripts
+```
+
+Tests manufacture their inputs, including AES ciphertext and native host code.
+The macOS smoke actually builds icons, signs a bundle, verifies it, reuses it,
+rebuilds it and executes its launcher. CI also reconstructs and tests the
+patched native workspace. Hardware two-monitor and real audio measurements
+are separate from automated synthetic checks; record their results explicitly.
+
+## Shared presentation smoke
+
+The patched host accepts `--test-pattern --test-frames 120`. The diagnostic
+manufactures GPU-only color images and exits after a bounded number of frames.
+Run `python3 scripts/native_smoke.py` from a logged-in graphical macOS session.
+It isolates HOME/data and checks single Vulkan, shared Vulkan, window lifecycle,
+Vulkan-to-OpenGL readback and two OpenGL contexts. No game or console data is used.
+
+With installed Khronos validation layers, pass `--validation-layer-dir <directory>`.
+The runner enables synchronization validation and fails on validation errors or
+missing GPU-sharing evidence, even when the host exit code is zero. The exact
+selected GPU image/crop readback also has an ignored-by-default live-GPU Rust
+regression; run it explicitly when a Vulkan loader and GPU are available.

@@ -79,3 +79,13 @@ class IntegrityRegressions(unittest.TestCase):
             self.assertTrue(partition.encrypted)
             with self.assertRaises(ncch.EncryptedPartition):
                 ncch.read_exefrs_file(card, partition, "icon")
+
+    def test_truncated_ncsd_table_fails_cleanly(self):
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / 'truncated.3ds'
+            for length in (0x104, 0x120, 345, 351, 0x1FF):
+                data = bytearray(length)
+                data[0x100:0x104] = b'NCSD'
+                path.write_bytes(data)
+                with self.subTest(length=length), self.assertRaises(ncch.ContainerError):
+                    ncch.parse_card_partitions(path)

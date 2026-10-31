@@ -11,7 +11,11 @@ lo cuentan en distintos niveles.
 - **[playing.md](playing.md)** — controles y troubleshooting clásico del host
   (sandbox, shader cache, modo dual monitor, bug reports sin llaves).
 
-## Diagramas (HTML explorables, con animación Live/Still)
+## Diagramas históricos (HTML explorables)
+
+Estos HTML están anclados a la revisión indicada dentro de cada documento.
+El flujo actualizado está en [development.md](development.md); las imágenes
+previas no certifican la sincronización ni publicación del código actual.
 
 - [pipeline-build.dataflow.html](diagrams/pipeline-build.dataflow.html) —
   *De tu dump a la app*: los stages del builder (discover→identify→verify→pack),
@@ -25,6 +29,9 @@ lo cuentan en distintos niveles.
 
 ## Para el que mantiene el repo
 
+- **[audit-implementation.md](audit-implementation.md)** — cierre de hallazgos,
+  pruebas ejecutadas y validaciones físicas pendientes.
+
 - **[roadmap.md](roadmap.md)** — el plan heredado F7+F8 con decisiones, fases,
   KPIs y su estado (todo ejecutado 2026-10-30).
 - **[zakuro-macos.md](zakuro-macos.md)** — el port en sí: resultados medidos
@@ -33,7 +40,7 @@ lo cuentan en distintos niveles.
   datos, disparadores para reabrir.
 - **[development.md](development.md)** — los stages del pipeline Python y el
   boceto del goal nativo.
-- **[patches/zakuro/](patches/zakuro/README.md)** — los 10 parches del fork
+- **[patches/zakuro/](patches/zakuro/README.md)** — la serie de parches del fork
   `vendors/zakuro` exportados (`git am`), con estado por parche y qué está listo
   para PR upstream.
 

@@ -1,0 +1,1134 @@
+From 8f21f6862b8a7d7abee09e897cd2b387a1807082 Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Sat, 31 Oct 2026 16:02:23 -0600
+Subject: [PATCH] gpu: share bounded presentation frames across native windows
+
+---
+ crates/zakuro-gpu/src/backend/mod.rs     |  90 +++++++-
+ crates/zakuro-gpu/src/backend/vulkan.rs  | 114 ++++++----
+ crates/zakuro-gpu/src/device.rs          | 262 +++++++++++++++++++++++
+ crates/zakuro-gpu/src/raster/hardware.rs |  58 +++--
+ crates/zakuro/src/cli.rs                 |  57 ++++-
+ crates/zakuro/src/lib.rs                 | 100 +++++++--
+ crates/zakuro/src/present.rs             |  14 ++
+ crates/zakuro/src/settings.rs            |   5 +
+ 8 files changed, 617 insertions(+), 83 deletions(-)
+
+diff --git a/crates/zakuro-gpu/src/backend/mod.rs b/crates/zakuro-gpu/src/backend/mod.rs
+index e2a2a79..8c61889 100644
+--- a/crates/zakuro-gpu/src/backend/mod.rs
++++ b/crates/zakuro-gpu/src/backend/mod.rs
+@@ -25,10 +25,12 @@ impl ScreenImage<'_> {
+ /// a screen's picture upright in an image of the renderer's, in the general
+ /// layout, which the Vulkan presenter draws straight from when the two share
+ /// a device.
+-#[derive(Debug, Clone, Copy)]
++#[derive(Debug, Clone)]
+ pub struct GpuScreen {
+     #[cfg(feature = "vulkan")]
+-    pub(crate) view: ash::vk::ImageView,
++    pub(crate) image: std::sync::Arc<crate::device::PresentationImage>,
++    #[cfg(feature = "vulkan")]
++    pub(crate) generation: u64,
+     /// where the screen's pixels lie in the image, as texture coordinates,
+     /// the corner and the size, then the corners inset by half a texel,
+     /// which filtering keeps within.
+@@ -474,3 +476,87 @@ mod tests {
+         assert_eq!((bottom.unwrap().width, bottom.unwrap().height), (320.0, 240.0));
+     }
+ }
++
++#[cfg(feature = "vulkan")]
++impl GpuScreen {
++    /// Recover this exact upright image/crop, including an interpolated twin.
++    /// Used only by a presenter which cannot consume the shared Vulkan image.
++    pub fn read_pixels(&self) -> Result<(Vec<u8>, u32, u32), String> {
++        use ash::vk;
++        let source = &self.image;
++        if self.generation != source.generation.load(std::sync::atomic::Ordering::Relaxed) {
++            return Err("GPU frame is no longer current".into());
++        }
++        let [left, top, width, height] = self.area;
++        let x = (left * source.width as f32).round() as u32;
++        let y = (top * source.height as f32).round() as u32;
++        let width = (width * source.width as f32).round() as u32;
++        let height = (height * source.height as f32).round() as u32;
++        if width == 0 || height == 0 || x.checked_add(width).is_none_or(|end| end > source.width)
++            || y.checked_add(height).is_none_or(|end| end > source.height) {
++            return Err("GPU frame crop exceeds its image".into());
++        }
++        let bytes = u64::from(width) * u64::from(height) * 4;
++        let owner = source.owner.clone();
++        let device = &owner.device;
++        let map = |error: vk::Result| format!("GPU frame readback: {error:?}");
++        // All exceptional paths retire submitted work before releasing buffers.
++        struct Readback {
++            owner: std::sync::Arc<crate::SharedDevice>,
++            buffer: vk::Buffer,
++            memory: vk::DeviceMemory,
++            pool: vk::CommandPool,
++        }
++        impl Drop for Readback {
++            fn drop(&mut self) {
++                unsafe {
++                    let _ = self.owner.device.device_wait_idle();
++                    if self.pool != vk::CommandPool::null() { self.owner.device.destroy_command_pool(self.pool, None); }
++                    self.owner.device.destroy_buffer(self.buffer, None);
++                    if self.memory != vk::DeviceMemory::null() { self.owner.device.free_memory(self.memory, None); }
++                }
++            }
++        }
++        let buffer = unsafe { device.create_buffer(&vk::BufferCreateInfo::default().size(bytes)
++            .usage(vk::BufferUsageFlags::TRANSFER_DST).sharing_mode(vk::SharingMode::EXCLUSIVE), None) }.map_err(map)?;
++        let mut held = Readback { owner: owner.clone(), buffer, memory: vk::DeviceMemory::null(), pool: vk::CommandPool::null() };
++        let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
++        let properties = unsafe { owner.instance.get_physical_device_memory_properties(owner.physical) };
++        let pick = |flags| (0..properties.memory_type_count).find(|index|
++            requirements.memory_type_bits & (1 << index) != 0 && properties.memory_types[*index as usize].property_flags.contains(flags));
++        let index = pick(vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
++            .or_else(|| pick(vk::MemoryPropertyFlags::HOST_VISIBLE)).ok_or("no readable host memory for GPU frame")?;
++        let coherent = properties.memory_types[index as usize].property_flags.contains(vk::MemoryPropertyFlags::HOST_COHERENT);
++        held.memory = unsafe { device.allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(requirements.size).memory_type_index(index), None) }.map_err(map)?;
++        unsafe { device.bind_buffer_memory(buffer, held.memory, 0) }.map_err(map)?;
++        held.pool = unsafe { device.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(owner.family), None) }.map_err(map)?;
++        let command = unsafe { device.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default().command_pool(held.pool)
++            .level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(1)) }.map_err(map)?[0];
++        let completion = crate::device::Submission::new(device, Some(owner.clone()), false).map_err(map)?;
++        unsafe {
++            device.begin_command_buffer(command, &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).map_err(map)?;
++            let ready = vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::MEMORY_WRITE).dst_access_mask(vk::AccessFlags::TRANSFER_READ);
++            device.cmd_pipeline_barrier(command, vk::PipelineStageFlags::ALL_COMMANDS, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[ready], &[], &[]);
++            let region = vk::BufferImageCopy::default()
++                .image_subresource(vk::ImageSubresourceLayers::default().aspect_mask(vk::ImageAspectFlags::COLOR).layer_count(1))
++                .image_offset(vk::Offset3D { x: x as i32, y: y as i32, z: 0 })
++                .image_extent(vk::Extent3D { width, height, depth: 1 });
++            device.cmd_copy_image_to_buffer(command, source.image, vk::ImageLayout::GENERAL, buffer, &[region]);
++            let visible = vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::HOST_READ);
++            device.cmd_pipeline_barrier(command, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::HOST, vk::DependencyFlags::empty(), &[visible], &[], &[]);
++            device.end_command_buffer(command).map_err(map)?;
++            device.queue_submit(owner.queue, &[vk::SubmitInfo::default().command_buffers(&[command])], completion.fence).map_err(map)?;
++        }
++        completion.wait().map_err(map)?;
++        let address = unsafe { device.map_memory(held.memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty()) }.map_err(map)?;
++        if !coherent {
++            if let Err(error) = unsafe { device.invalidate_mapped_memory_ranges(&[vk::MappedMemoryRange::default().memory(held.memory).size(vk::WHOLE_SIZE)]) } {
++                unsafe { device.unmap_memory(held.memory) };
++                return Err(map(error));
++            }
++        }
++        let pixels = unsafe { std::slice::from_raw_parts(address as *const u8, bytes as usize) }.to_vec();
++        unsafe { device.unmap_memory(held.memory) };
++        Ok((pixels, width, height))
++    }
++}
+diff --git a/crates/zakuro-gpu/src/backend/vulkan.rs b/crates/zakuro-gpu/src/backend/vulkan.rs
+index d01f63f..1c60fd7 100644
+--- a/crates/zakuro-gpu/src/backend/vulkan.rs
++++ b/crates/zakuro-gpu/src/backend/vulkan.rs
+@@ -45,7 +45,7 @@ const FRAMES_IN_FLIGHT: usize = 2;
+ const WHOLE: [f32; 8] = [0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0];
+ 
+ /// what a screen is drawn from in a frame.
+-#[derive(Clone, Copy)]
++#[derive(Clone)]
+ enum Source {
+     Nothing,
+     /// the image of its own the presenter uploads pixels to.
+@@ -126,7 +126,7 @@ pub struct VulkanPresenter {
+     command_buffers: Vec<vk::CommandBuffer>,
+     image_available: Vec<vk::Semaphore>,
+     render_finished: Vec<vk::Semaphore>,
+-    in_flight: Vec<vk::Fence>,
++    in_flight: Vec<Arc<crate::device::Submission>>,
+     frame: usize,
+ 
+     /// the top screen, the bottom one and the top one's picture for the
+@@ -149,6 +149,22 @@ impl VulkanPresenter {
+         window: &(impl HasDisplayHandle + HasWindowHandle),
+         size: (u32, u32),
+     ) -> Result<VulkanPresenter, PresentError> {
++        Self::create(window, size, None)
++    }
++
++    pub fn with_device(
++        window: &(impl HasDisplayHandle + HasWindowHandle),
++        size: (u32, u32),
++        device: Arc<SharedDevice>,
++    ) -> Result<Self, PresentError> {
++        Self::create(window, size, Some(device))
++    }
++
++    fn create(
++        window: &(impl HasDisplayHandle + HasWindowHandle),
++        size: (u32, u32),
++        existing: Option<Arc<SharedDevice>>,
++    ) -> Result<Self, PresentError> {
+         // SAFETY: the loader reads the system's Vulkan library, which is the
+         // documented way to start.
+         let entry = unsafe { ash::Entry::load() }
+@@ -204,8 +220,11 @@ impl VulkanPresenter {
+             } else {
+                 vk::InstanceCreateFlags::empty()
+             });
+-        let instance = unsafe { entry.create_instance(&instance_info, None) }
+-            .map_err(vk_fail("creating the instance"))?;
++        let instance = match &existing {
++            Some(shared) => shared.instance.clone(),
++            None => unsafe { entry.create_instance(&instance_info, None) }
++                .map_err(vk_fail("creating the instance"))?,
++        };
+ 
+         let surface_instance = ash::khr::surface::Instance::new(&entry, &instance);
+         let surface = unsafe {
+@@ -219,8 +238,18 @@ impl VulkanPresenter {
+         }
+         .map_err(vk_fail("creating the surface"))?;
+ 
+-        let (physical_device, queue_family) =
+-            pick_device(&instance, &surface_instance, surface)?;
++        let (physical_device, queue_family) = match &existing {
++            Some(shared) => {
++                let supported = unsafe { surface_instance.get_physical_device_surface_support(shared.physical, shared.family, surface) }
++                    .map_err(vk_fail("querying shared presentation support"))?;
++                if !supported {
++                    unsafe { surface_instance.destroy_surface(surface, None) };
++                    return Err(fail("shared queue cannot present to this surface"));
++                }
++                (shared.physical, shared.family)
++            }
++            None => pick_device(&instance, &surface_instance, surface)?,
++        };
+ 
+         let properties = unsafe { instance.get_physical_device_properties(physical_device) };
+         let name = unsafe { CStr::from_ptr(properties.device_name.as_ptr()) };
+@@ -232,8 +261,12 @@ impl VulkanPresenter {
+         // it draws are shown from its images rather than copied out and up
+         // again, ZAKURO_COPY_SCREENS keeps the copies
+         let copy = std::env::var_os("ZAKURO_COPY_SCREENS").is_some();
+-        let swapchain_extension = [ash::khr::swapchain::NAME.as_ptr()];
+-        let shared = if copy || !can_render(&instance, physical_device, queue_family) {
++        let swapchain_extension = crate::device::device_extensions(
++            &instance, physical_device, &[ash::khr::swapchain::NAME.as_ptr()],
++        ).map_err(vk_fail("querying device extensions"))?;
++        let shared = if existing.is_some() {
++            existing
++        } else if copy || !can_render(&instance, physical_device, queue_family) {
+             None
+         } else {
+             render_device(&entry, &instance, physical_device, queue_family, &swapchain_extension)
+@@ -352,7 +385,7 @@ impl VulkanPresenter {
+         .map_err(vk_fail("allocating command buffers"))?;
+ 
+         let mut image_available = Vec::with_capacity(FRAMES_IN_FLIGHT);
+-        let mut render_finished = Vec::with_capacity(FRAMES_IN_FLIGHT);
++        let render_finished = Vec::new();
+         let mut in_flight = Vec::with_capacity(FRAMES_IN_FLIGHT);
+         for _ in 0..FRAMES_IN_FLIGHT {
+             let semaphore_info = vk::SemaphoreCreateInfo::default();
+@@ -360,20 +393,8 @@ impl VulkanPresenter {
+                 unsafe { device.create_semaphore(&semaphore_info, None) }
+                     .map_err(vk_fail("creating a semaphore"))?,
+             );
+-            render_finished.push(
+-                unsafe { device.create_semaphore(&semaphore_info, None) }
+-                    .map_err(vk_fail("creating a semaphore"))?,
+-            );
+-            in_flight.push(
+-                unsafe {
+-                    device.create_fence(
+-                        // signalled, so the first frame does not wait forever.
+-                        &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
+-                        None,
+-                    )
+-                }
+-                .map_err(vk_fail("creating a fence"))?,
+-            );
++            in_flight.push(Arc::new(crate::device::Submission::new(&device, shared.as_ref().cloned(), true)
++                .map_err(vk_fail("creating a fence"))?));
+         }
+ 
+         // the screens start at their native sizes, upload grows them if a
+@@ -546,6 +567,9 @@ impl VulkanPresenter {
+             .map_err(vk_fail("creating the swapchain"))?;
+ 
+         self.destroy_swapchain_resources();
++        for semaphore in self.render_finished.drain(..) {
++            unsafe { self.device.destroy_semaphore(semaphore, None) };
++        }
+         if old != vk::SwapchainKHR::null() {
+             unsafe { self.swapchain_device.destroy_swapchain(old, None) };
+         }
+@@ -557,6 +581,8 @@ impl VulkanPresenter {
+             .map_err(vk_fail("getting swapchain images"))?;
+ 
+         for image in images {
++            self.render_finished.push(unsafe { self.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
++                .map_err(vk_fail("creating presentation semaphore"))?);
+             let view = unsafe {
+                 self.device.create_image_view(
+                     &vk::ImageViewCreateInfo::default()
+@@ -656,11 +682,18 @@ impl VulkanPresenter {
+     /// what a screen is drawn from this frame, pixels uploaded to its own
+     /// image or an image of the renderer's the frame's set points at.
+     fn source(&mut self, index: usize, image: &ScreenImage<'_>) -> Result<Source, PresentError> {
+-        if let Some(gpu) = image.gpu {
++        if let Some(gpu) = &image.gpu {
++            let Some(shared) = &self.shared else { return Err(fail("GPU image requires shared device")) };
++            if !Arc::ptr_eq(shared, &gpu.image.owner) {
++                return Err(fail("GPU image belongs to another device"));
++            }
++            if gpu.generation != gpu.image.generation.load(std::sync::atomic::Ordering::Relaxed) {
++                return Err(fail("GPU frame is no longer current"));
++            }
+             self.screens[index].showing = false;
+             let info = [vk::DescriptorImageInfo::default()
+                 .sampler(self.sampler)
+-                .image_view(gpu.view)
++                .image_view(gpu.image.view)
+                 .image_layout(vk::ImageLayout::GENERAL)];
+             let write = vk::WriteDescriptorSet::default()
+                 .dst_set(self.gpu_sets[self.frame][index])
+@@ -670,7 +703,7 @@ impl VulkanPresenter {
+             // SAFETY: the frame's fence was waited on, so no command using
+             // the set is in flight
+             unsafe { self.device.update_descriptor_sets(&[write], &[]) };
+-            return Ok(Source::Gpu(gpu));
++            return Ok(Source::Gpu(gpu.clone()));
+         }
+         if !image.is_empty() {
+             self.upload(index, image)?;
+@@ -683,8 +716,8 @@ impl VulkanPresenter {
+     /// points the frame's 3D set at the top screen's two pictures, wherever
+     /// each is drawn from.
+     fn write_stereo_set(&self, sources: &[Source; 3]) {
+-        let view = |index: usize| match sources[index] {
+-            Source::Gpu(gpu) => Some((gpu.view, vk::ImageLayout::GENERAL)),
++        let view = |index: usize| match &sources[index] {
++            Source::Gpu(gpu) => Some((gpu.image.view, vk::ImageLayout::GENERAL)),
+             Source::Own => Some((self.screens[index].view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)),
+             Source::Nothing => None,
+         };
+@@ -811,7 +844,7 @@ impl VulkanPresenter {
+                 vk::SubpassContents::INLINE,
+             );
+             // each screen's set and place in its image
+-            let crop = |index: usize| match sources[index] {
++            let crop = |index: usize| match &sources[index] {
+                 Source::Nothing => None,
+                 Source::Own => Some((self.screens[index].descriptor, WHOLE)),
+                 Source::Gpu(gpu) => {
+@@ -890,7 +923,7 @@ impl Presenter for VulkanPresenter {
+         }
+ 
+         let frame = self.frame;
+-        let fence = self.in_flight[frame];
++        let fence = self.in_flight[frame].fence;
+         unsafe {
+             self.device
+                 .wait_for_fences(&[fence], true, u64::MAX)
+@@ -918,12 +951,11 @@ impl Presenter for VulkanPresenter {
+             }
+         };
+ 
+-        // only reset the fence once we know we are going to submit.
+-        unsafe {
+-            self.device
+-                .reset_fences(&[fence])
+-                .map_err(vk_fail("resetting a fence"))?;
+-        }
++        // Never reset a fence observed by a pooled image: each submission
++        // gets a distinct completion object, retained by both consumers.
++        let completion = Arc::new(crate::device::Submission::new(&self.device, self.shared.clone(), false)
++            .map_err(vk_fail("creating completion fence"))?);
++        let fence = completion.fence;
+ 
+         for screen in &mut self.screens {
+             screen.dirty = false;
+@@ -957,7 +989,7 @@ impl Presenter for VulkanPresenter {
+         }
+ 
+         let wait = [self.image_available[frame]];
+-        let signal = [self.render_finished[frame]];
++        let signal = [self.render_finished[image_index as usize]];
+         let stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+         let buffers = [command_buffer];
+         let submit = vk::SubmitInfo::default()
+@@ -971,6 +1003,10 @@ impl Presenter for VulkanPresenter {
+                 .map_err(vk_fail("submitting"))?;
+         }
+ 
++        for image in [&top, &bottom, &right] {
++            if let Some(gpu) = &image.gpu { gpu.image.consumed_by(completion.clone()); }
++        }
++        self.in_flight[frame] = completion;
+         let swapchains = [self.swapchain];
+         let indices = [image_index];
+         let present = vk::PresentInfoKHR::default()
+@@ -1035,9 +1071,7 @@ impl Drop for VulkanPresenter {
+             for semaphore in self.render_finished.drain(..) {
+                 self.device.destroy_semaphore(semaphore, None);
+             }
+-            for fence in self.in_flight.drain(..) {
+-                self.device.destroy_fence(fence, None);
+-            }
++            self.in_flight.clear();
+             if let Some(mut painter) = self.overlay.take() {
+                 painter.destroy(&self.device);
+             }
+diff --git a/crates/zakuro-gpu/src/device.rs b/crates/zakuro-gpu/src/device.rs
+index 3a90135..f10e153 100644
+--- a/crates/zakuro-gpu/src/device.rs
++++ b/crates/zakuro-gpu/src/device.rs
+@@ -4,6 +4,23 @@
+ 
+ use ash::vk;
+ 
++/// Portability drivers require their advertised subset extension at device creation.
++pub(crate) fn device_extensions(
++    instance: &ash::Instance,
++    physical: vk::PhysicalDevice,
++    extra: &[*const std::ffi::c_char],
++) -> Result<Vec<*const std::ffi::c_char>, vk::Result> {
++    let available = unsafe { instance.enumerate_device_extension_properties(physical) }?;
++    let subset = c"VK_KHR_portability_subset";
++    let mut extensions = extra.to_vec();
++    if available.iter().any(|one| one.extension_name_as_c_str() == Ok(subset))
++        && !extensions.iter().any(|one| unsafe { std::ffi::CStr::from_ptr(*one) } == subset)
++    {
++        extensions.push(subset.as_ptr());
++    }
++    Ok(extensions)
++}
++
+ /// a device, the instance it came from and its one queue, gone once the
+ /// last of the renderer and the presenter lets go of it. both record and
+ /// submit on the thread the window runs on, so the queue needs no lock.
+@@ -46,3 +63,248 @@ impl Drop for SharedDevice {
+         }
+     }
+ }
++
++/// A submission completion whose fence can outlive the presenting window.
++/// The shared device stays alive until the last image consumer releases it.
++pub(crate) struct Submission {
++    pub(crate) fence: vk::Fence,
++    device: ash::Device,
++    _owner: Option<std::sync::Arc<SharedDevice>>,
++}
++
++impl Submission {
++    pub(crate) fn new(device: &ash::Device, owner: Option<std::sync::Arc<SharedDevice>>, signaled: bool) -> Result<Self, vk::Result> {
++        let flags = if signaled { vk::FenceCreateFlags::SIGNALED } else { vk::FenceCreateFlags::empty() };
++        let fence = unsafe { device.create_fence(&vk::FenceCreateInfo::default().flags(flags), None) }?;
++        Ok(Self { fence, device: device.clone(), _owner: owner })
++    }
++    pub(crate) fn ready(&self) -> Result<bool, vk::Result> {
++        unsafe { self.device.get_fence_status(self.fence) }
++    }
++    pub(crate) fn wait(&self) -> Result<(), vk::Result> {
++        unsafe { self.device.wait_for_fences(&[self.fence], true, u64::MAX) }
++    }
++}
++
++impl Drop for Submission {
++    fn drop(&mut self) {
++        // A submitted fence is retained by the presenter or image consumers
++        // until completion. An unsubmitted fence can be destroyed immediately.
++        unsafe { self.device.destroy_fence(self.fence, None) };
++    }
++}
++
++/// An upright output owned independently of its raster surface. Only these
++/// images are pooled; the rasterizer's render targets remain private.
++pub(crate) struct PresentationImage {
++    pub(crate) image: vk::Image,
++    pub(crate) view: vk::ImageView,
++    pub(crate) width: u32,
++    pub(crate) height: u32,
++    memory: vk::DeviceMemory,
++    pub(crate) owner: std::sync::Arc<SharedDevice>,
++    consumers: std::sync::Mutex<Vec<std::sync::Arc<Submission>>>,
++    pub(crate) generation: std::sync::atomic::AtomicU64,
++}
++
++impl PresentationImage {
++    pub(crate) fn new(image: vk::Image, view: vk::ImageView, memory: vk::DeviceMemory, width: u32, height: u32, owner: std::sync::Arc<SharedDevice>) -> Self {
++        Self { image, view, width, height, memory, owner, consumers: Default::default(), generation: Default::default() }
++    }
++    pub(crate) fn consumed_by(&self, submission: std::sync::Arc<Submission>) {
++        let mut consumers = self.consumers.lock().unwrap();
++        consumers.retain(|one| !matches!(one.ready(), Ok(true)));
++        if !consumers.iter().any(|one| std::sync::Arc::ptr_eq(one, &submission)) {
++            consumers.push(submission);
++        }
++    }
++    pub(crate) fn ready(&self) -> Result<bool, vk::Result> {
++        let mut consumers = self.consumers.lock().unwrap();
++        let mut pending = false;
++        for consumer in consumers.iter() { pending |= !consumer.ready()?; }
++        if !pending { consumers.clear(); }
++        Ok(!pending)
++    }
++    pub(crate) fn wait(&self) -> Result<(), vk::Result> {
++        let mut consumers = self.consumers.lock().unwrap();
++        for consumer in consumers.iter() { consumer.wait()?; }
++        consumers.clear();
++        Ok(())
++    }
++}
++
++impl Drop for PresentationImage {
++    fn drop(&mut self) {
++        // Destruction is exceptional (surface eviction/resize/shutdown), never
++        // the steady frame path. Also cover a producer not presented yet.
++        unsafe {
++            let _ = self.owner.device.device_wait_idle();
++            self.owner.device.destroy_image_view(self.view, None);
++            self.owner.device.destroy_image(self.image, None);
++            self.owner.device.free_memory(self.memory, None);
++        }
++    }
++}
++
++impl std::fmt::Debug for PresentationImage {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_struct("PresentationImage").field("view", &self.view).finish_non_exhaustive()
++    }
++}
++
++/// A bounded pool used by the producer and tested with the same completion
++/// interface as the Vulkan adapter. A free entry never incurs a host wait.
++pub(crate) struct FramePool<T> {
++    entries: Vec<std::sync::Arc<T>>,
++    next: usize,
++}
++impl<T> Default for FramePool<T> {
++    fn default() -> Self { Self { entries: Vec::new(), next: 0 } }
++}
++impl<T> FramePool<T> {
++    pub(crate) fn acquire<E>(
++        &mut self,
++        mut make: impl FnMut() -> Result<T, E>,
++        ready: impl Fn(&T) -> Result<bool, E>,
++        wait: impl Fn(&T) -> Result<(), E>,
++    ) -> Result<std::sync::Arc<T>, E> {
++        for (index, entry) in self.entries.iter().enumerate() {
++            if ready(entry)? {
++                self.next = (index + 1) % self.entries.len();
++                return Ok(entry.clone());
++            }
++        }
++        if self.entries.len() < 3 {
++            let entry = std::sync::Arc::new(make()?);
++            self.entries.push(entry.clone());
++            self.next = 0;
++            return Ok(entry);
++        }
++        let entry = self.entries[self.next].clone();
++        wait(&entry)?;
++        self.next = (self.next + 1) % self.entries.len();
++        Ok(entry)
++    }
++}
++
++#[cfg(test)]
++mod frame_pool_tests {
++    use super::FramePool;
++    use std::cell::{Cell, RefCell};
++    use std::sync::Arc;
++    struct Image { number: usize, complete: Cell<bool> }
++    #[test]
++    fn frame_pool_waits_only_when_three_images_are_busy() {
++        let mut pool = FramePool::default();
++        let made = Cell::new(0);
++        let waits = RefCell::new(Vec::new());
++        let acquire = |pool: &mut FramePool<Image>| pool.acquire::<()>(
++            || { let number = made.get(); made.set(number + 1); Ok(Image { number, complete: Cell::new(false) }) },
++            |image| Ok(image.complete.get()),
++            |image| { waits.borrow_mut().push(image.number); Ok(()) },
++        ).unwrap();
++        let first = acquire(&mut pool);
++        let second = acquire(&mut pool);
++        let third = acquire(&mut pool);
++        assert_eq!(made.get(), 3);
++        assert!(waits.borrow().is_empty());
++        assert!(Arc::ptr_eq(&first, &acquire(&mut pool)));
++        assert_eq!(*waits.borrow(), [0]);
++        second.complete.set(true);
++        assert!(Arc::ptr_eq(&second, &acquire(&mut pool)));
++        assert_eq!(*waits.borrow(), [0]);
++        assert_eq!(made.get(), 3);
++        let weak = Arc::downgrade(&third);
++        drop(pool);
++        assert!(weak.upgrade().is_some(), "a consumer owns its image beyond the producer pool");
++        drop(third);
++        assert!(weak.upgrade().is_none());
++    }
++}
++
++impl SharedDevice {
++    /// Manufacture a GPU-only solid screen for the frontend's synthetic
++    /// presentation diagnostic. No ROM, shader dump or player data is used.
++    pub fn solid_screen(self: &std::sync::Arc<Self>, width: u32, height: u32, color: [f32; 4]) -> Result<crate::GpuScreen, String> {
++        let device = &self.device;
++        let map = |error: vk::Result| format!("synthetic GPU screen: {error:?}");
++        let range = vk::ImageSubresourceRange::default().aspect_mask(vk::ImageAspectFlags::COLOR).level_count(1).layer_count(1);
++        let image = unsafe { device.create_image(&vk::ImageCreateInfo::default()
++            .image_type(vk::ImageType::TYPE_2D).format(vk::Format::R8G8B8A8_UNORM)
++            .extent(vk::Extent3D { width, height, depth: 1 }).mip_levels(1).array_layers(1)
++            .samples(vk::SampleCountFlags::TYPE_1).tiling(vk::ImageTiling::OPTIMAL)
++            .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::SAMPLED)
++            .initial_layout(vk::ImageLayout::UNDEFINED), None) }.map_err(map)?;
++        let requirements = unsafe { device.get_image_memory_requirements(image) };
++        let properties = unsafe { self.instance.get_physical_device_memory_properties(self.physical) };
++        let memory_type = (0..properties.memory_type_count).find(|index|
++            requirements.memory_type_bits & (1 << index) != 0 && properties.memory_types[*index as usize].property_flags.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL));
++        let Some(memory_type) = memory_type else {
++            unsafe { device.destroy_image(image, None) };
++            return Err("no memory type for synthetic GPU screen".into());
++        };
++        let memory = match unsafe { device.allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(requirements.size).memory_type_index(memory_type), None) } {
++            Ok(memory) => memory,
++            Err(error) => { unsafe { device.destroy_image(image, None) }; return Err(map(error)); }
++        };
++        let made = (|| {
++            unsafe { device.bind_image_memory(image, memory, 0) }.map_err(map)?;
++            unsafe { device.create_image_view(&vk::ImageViewCreateInfo::default().image(image)
++                .view_type(vk::ImageViewType::TYPE_2D).format(vk::Format::R8G8B8A8_UNORM).subresource_range(range), None) }.map_err(map)
++        })();
++        let view = match made {
++            Ok(view) => view,
++            Err(error) => { unsafe { device.destroy_image(image, None); device.free_memory(memory, None); } return Err(error); }
++        };
++        let owned = std::sync::Arc::new(PresentationImage::new(image, view, memory, width, height, self.clone()));
++        let pool = unsafe { device.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(self.family), None) }.map_err(map)?;
++        let produced = (|| {
++            let command = unsafe { device.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default().command_pool(pool)
++                .level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(1)) }.map_err(map)?[0];
++            let fence = Submission::new(device, Some(self.clone()), false).map_err(map)?;
++            unsafe {
++                device.begin_command_buffer(command, &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).map_err(map)?;
++                let initial = vk::ImageMemoryBarrier::default().image(image).subresource_range(range)
++                    .old_layout(vk::ImageLayout::UNDEFINED).new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
++                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
++                    .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE);
++                device.cmd_pipeline_barrier(command, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[initial]);
++                device.cmd_clear_color_image(command, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &vk::ClearColorValue { float32: color }, &[range]);
++                let ready = vk::ImageMemoryBarrier::default().image(image).subresource_range(range)
++                    .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL).new_layout(vk::ImageLayout::GENERAL)
++                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
++                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ);
++                device.cmd_pipeline_barrier(command, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[ready]);
++                device.end_command_buffer(command).map_err(map)?;
++                device.queue_submit(self.queue, &[vk::SubmitInfo::default().command_buffers(&[command])], fence.fence).map_err(map)?;
++            }
++            fence.wait().map_err(map)
++        })();
++        unsafe { device.destroy_command_pool(pool, None) };
++        produced?;
++        Ok(crate::GpuScreen { image: owned, generation: 0, area: [0.0, 0.0, 1.0, 1.0], bounds: [0.0, 0.0, 1.0, 1.0] })
++    }
++}
++
++#[cfg(test)]
++mod gpu_readback_tests {
++    use super::SharedDevice;
++    use std::sync::Arc;
++
++    #[test]
++    #[ignore = "requires a Vulkan 1.3 loader and GPU; synthetic pixels only"]
++    fn readback_keeps_the_selected_frame_and_crop() {
++        let device = Arc::new(SharedDevice::new().expect("Vulkan device"));
++        let normal = device.solid_screen(4, 4, [1.0, 0.0, 0.0, 1.0]).unwrap();
++        // A distinct image stands for the interpolation twin; creating or
++        // selecting another frame must not alter the captured frame handle.
++        let mut selected_twin = device.solid_screen(4, 4, [0.0, 0.0, 1.0, 1.0]).unwrap();
++        selected_twin.area = [0.25, 0.25, 0.5, 0.5];
++        let (pixels, width, height) = selected_twin.read_pixels().unwrap();
++        assert_eq!((width, height), (2, 2));
++        assert_eq!(pixels, [0, 0, 255, 255].repeat(4));
++        let (pixels, width, height) = normal.read_pixels().unwrap();
++        assert_eq!((width, height), (4, 4));
++        assert_eq!(pixels, [255, 0, 0, 255].repeat(16));
++    }
++}
+diff --git a/crates/zakuro-gpu/src/raster/hardware.rs b/crates/zakuro-gpu/src/raster/hardware.rs
+index 9726975..5a7884d 100644
+--- a/crates/zakuro-gpu/src/raster/hardware.rs
++++ b/crates/zakuro-gpu/src/raster/hardware.rs
+@@ -659,11 +659,12 @@ fn pixel_offset(tiled: bool, x: u32, y: u32, width: u32, bpp: u32) -> usize {
+ }
+ 
+ /// a screen's newest picture turned upright into an image that a presenter
+-/// sharing the device draws straight from, and the batch that drew it. one
+-/// is enough, every batch starts with a barrier that waits for the presents
+-/// submitted before it, so no picture is drawn over while one shows it.
++/// sharing the device draws straight from, and the batch that drew it.
++/// Three output images allow both presenters to consume without a host wait;
++/// recycling waits only if all outputs still have outstanding consumers.
+ struct Upright {
+-    image: Image,
++    image: Arc<crate::device::PresentationImage>,
++    pool: crate::device::FramePool<crate::device::PresentationImage>,
+     batch: u64,
+     /// nothing changed the surface since.
+     current: bool,
+@@ -4582,20 +4583,30 @@ impl Hardware {
+         self.mark(Work::Capture, false);
+         // a row of the surface is a column of the screen
+         let (width, height) = (self.surfaces[index].height * self.scale, self.surfaces[index].width * self.scale);
+-        let made = match twin {
+-            true => self.surfaces[index].twin_upright.is_some(),
+-            false => self.surfaces[index].upright.is_some(),
++        let previous = match twin {
++            true => self.surfaces[index].twin_upright.as_mut(),
++            false => self.surfaces[index].upright.as_mut(),
+         };
+-        if !made {
+-            let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED;
+-            self.end_rendering();
+-            let image = self.image(width, height, COLOR_FORMAT, usage, vk::ImageAspectFlags::COLOR)?;
+-            let upright = Some(Upright { image, batch: 0, current: false });
+-            match twin {
+-                true => self.surfaces[index].twin_upright = upright,
+-                false => self.surfaces[index].upright = upright,
+-            }
++        let mut pool = previous.map(|upright| std::mem::take(&mut upright.pool)).unwrap_or_default();
++        let acquired = pool.acquire(
++            || {
++                let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_SRC;
++                self.end_rendering();
++                let raw = self.image(width, height, COLOR_FORMAT, usage, vk::ImageAspectFlags::COLOR)?;
++                Ok(crate::device::PresentationImage::new(raw.image, raw.view, raw.memory, width, height, self._shared.clone()))
++            },
++            |image| image.ready().map_err(vk_error("polling presentation consumers")),
++            |image| image.wait().map_err(vk_error("waiting for presentation consumers")),
++        );
++        let slot = match twin {
++            true => &mut self.surfaces[index].twin_upright,
++            false => &mut self.surfaces[index].upright,
++        };
++        if let Some(upright) = slot { upright.pool = pool; }
++        else {
++            *slot = Some(Upright { image: acquired.as_ref().map_err(Clone::clone)?.clone(), pool, batch: 0, current: false });
+         }
++        slot.as_mut().unwrap().image = acquired?;
+         let (layout, pipeline) = self.upright_image_pipeline()?;
+         self.end_rendering();
+         self.barrier();
+@@ -4608,6 +4619,7 @@ impl Hardware {
+         };
+         let Some(upright) = upright else { unreachable!("made above") };
+         upright.batch = batch;
++        upright.image.generation.store(batch, std::sync::atomic::Ordering::Relaxed);
+         upright.current = true;
+         let source = [vk::DescriptorImageInfo::default().image_view(from).image_layout(vk::ImageLayout::GENERAL)];
+         let target = [vk::DescriptorImageInfo::default().image_view(upright.image.view).image_layout(vk::ImageLayout::GENERAL)];
+@@ -4724,7 +4736,7 @@ impl Hardware {
+         let Some(upright) = upright.filter(|upright| upright.batch == screen.batch) else {
+             return Ok(None);
+         };
+-        let view = upright.image.view;
++        let image = upright.image.clone();
+         if screen.batch >= self.batch {
+             self.submit()?;
+         }
+@@ -4736,7 +4748,8 @@ impl Hardware {
+         let (left, right) = ((first * scale) as f32, ((first + count) * scale) as f32);
+         let (top, bottom) = (((row_pixels - screen.columns) * scale) as f32, (row_pixels * scale) as f32);
+         Ok(Some(crate::GpuScreen {
+-            view,
++            image,
++            generation: screen.batch,
+             area: [left / width, top / height, (right - left) / width, (bottom - top) / height],
+             bounds: [(left + 0.5) / width, (top + 0.5) / height, (right - 0.5) / width, (bottom - 0.5) / height],
+         }))
+@@ -5425,8 +5438,8 @@ impl Drop for Hardware {
+             }
+             for surface in &self.surfaces {
+                 self.destroy_image(&surface.image);
+-                let uprights = [&surface.upright, &surface.twin_upright].into_iter().flatten().map(|upright| &upright.image);
+-                for image in [&surface.native, &surface.twin].into_iter().flatten().chain(uprights) {
++                // Upright images are Arc-owned and retire after their consumers.
++                for image in [&surface.native, &surface.twin].into_iter().flatten() {
+                     self.destroy_image(image);
+                 }
+             }
+@@ -5625,8 +5638,9 @@ pub(crate) fn render_device(
+ ) -> Result<SharedDevice, String> {
+     let priorities = [1.0];
+     let queues = [vk::DeviceQueueCreateInfo::default().queue_family_index(family).queue_priorities(&priorities)];
+-    let mut extensions = vec![ash::khr::push_descriptor::NAME.as_ptr()];
+-    extensions.extend_from_slice(extra);
++    let mut extensions = crate::device::device_extensions(instance, physical, extra)
++        .map_err(vk_error("query device extensions"))?;
++    extensions.push(ash::khr::push_descriptor::NAME.as_ptr());
+     // SAFETY: the physical device came from this instance
+     let supported = unsafe { instance.get_physical_device_features(physical) };
+     let logic_ops = supported.logic_op == vk::TRUE;
+diff --git a/crates/zakuro/src/cli.rs b/crates/zakuro/src/cli.rs
+index f62b559..38dfa39 100644
+--- a/crates/zakuro/src/cli.rs
++++ b/crates/zakuro/src/cli.rs
+@@ -1,6 +1,7 @@
+ //! command line parsing.
+ 
+ use zakuro_gpu::RendererKind;
++use crate::settings::Language;
+ 
+ #[derive(Debug, Clone)]
+ pub struct Options {
+@@ -11,12 +12,15 @@ pub struct Options {
+     /// window scale relative to the console's 400x480 combined screens, the
+     /// settings' when not given.
+     pub scale: Option<u32>,
++    /// runtime override; never written into player settings.
++    pub language: Option<Language>,
+     /// run without a window for this many frames, then report.
+     pub headless: Option<u64>,
+     pub profile: bool,
+     pub new3ds: bool,
+     /// skip loading a ROM entirely and just paint both screens solid colors.
+     pub test_pattern: bool,
++    pub test_frames: Option<u64>,
+     /// the split-monitors spike: a second window draws the bottom screen
+     /// alone, straight from the same frames.
+     pub split_spike: bool,
+@@ -53,6 +57,8 @@ options:
+   --rasterizer <hardware|software> where the 3D is drawn (default: hardware,
+                                    the host GPU through Vulkan, or software
+                                    where that does not start)
++  --language <code>                system language for this run (ja,en,fr,de,it,es,
++                                   zh-Hans,ko,nl,pt,ru,zh-Hant)
+   --scale <n>                      window scale factor (default: 2)
+   --split <on|off>                 a second window draws one screen alone
+                                    (the bottom one), this run only
+@@ -60,6 +66,8 @@ options:
+                                    order by number, 0 first
+   --split-spike                    --split on, the spike's older name
+   (Esc opens the menu over a game, F1 pauses, F11 goes fullscreen)
++  --test-pattern                   synthetic red/blue screens, no game data
++  --test-frames <n>                exit after n presentations (test-pattern only)
+   --headless <frames>              run without a window and print a report
+   --new3ds                         emulate a New 3DS
+   --profile                        collect a sampling profile and print it
+@@ -82,15 +90,21 @@ the working directory or where saves live, for titles that render text with it.
+ ";
+ 
+ pub fn parse() -> Result<Options, String> {
++    parse_args(std::env::args().skip(1))
++}
++
++pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
+     let mut rom = None;
+     let mut options = Options {
+         rom: None,
+         renderer: None,
+         scale: None,
++        language: None,
+         headless: None,
+         profile: false,
+         new3ds: false,
+         test_pattern: false,
++        test_frames: None,
+         split_spike: false,
+         split: None,
+         monitor_bottom: None,
+@@ -101,7 +115,7 @@ pub fn parse() -> Result<Options, String> {
+         mute: false,
+     };
+ 
+-    let mut args = std::env::args().skip(1);
++    let mut args = args.into_iter();
+     while let Some(arg) = args.next() {
+         match arg.as_str() {
+             "-h" | "--help" => {
+@@ -114,6 +128,10 @@ pub fn parse() -> Result<Options, String> {
+                     RendererKind::parse(&value).ok_or_else(|| format!("unknown renderer '{value}'"))?,
+                 );
+             }
++            "--language" => {
++                let value = args.next().ok_or("--language needs a code")?;
++                options.language = Some(Language::parse(&value).ok_or_else(|| format!("unknown language '{value}'"))?);
++            }
+             "--scale" => {
+                 let value = args.next().ok_or("--scale needs a value")?;
+                 options.scale = Some(value.parse().map_err(|_| format!("'{value}' is not a scale"))?);
+@@ -145,6 +163,12 @@ pub fn parse() -> Result<Options, String> {
+             "--mute" => options.mute = true,
+             "--profile" => options.profile = true,
+             "--test-pattern" => options.test_pattern = true,
++            "--test-frames" => {
++                let value = args.next().ok_or("--test-frames needs a count")?;
++                let frames = value.parse().map_err(|_| "invalid test frame count")?;
++                if frames == 0 { return Err("--test-frames must be positive".into()); }
++                options.test_frames = Some(frames);
++            },
+             "--split-spike" => options.split_spike = true,
+             "--split" => {
+                 let value = args.next().ok_or("--split needs a value")?;
+@@ -167,9 +191,40 @@ pub fn parse() -> Result<Options, String> {
+     }
+ 
+     options.rom = rom;
++    if options.test_frames.is_some() && !options.test_pattern {
++        return Err("--test-frames requires --test-pattern".into());
++    }
+     if options.headless.is_some() && options.rom.is_none() && !options.test_pattern {
+         print!("{USAGE}");
+         return Err("--headless needs a game".to_owned());
+     }
+     Ok(options)
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn args(values: &[&str]) -> Result<Options, String> {
++        parse_args(values.iter().map(|value| value.to_string()))
++    }
++    #[test]
++    fn explicit_split_off_overrides_saved_companion() {
++        assert!(!args(&["--split", "off"]).unwrap().companion_wanted(true));
++        assert!(args(&[]).unwrap().companion_wanted(true));
++        assert!(!args(&[]).unwrap().companion_wanted(false));
++    }
++    #[test]
++    fn language_override_uses_console_codes_without_settings_writes() {
++        assert_eq!(args(&["--language", "es"]).unwrap().language.unwrap().code(), 5);
++        assert_eq!(args(&["--language", "zh-Hant"]).unwrap().language.unwrap().code(), 11);
++        assert!(args(&["--language", "bad"]).is_err());
++        assert!(args(&["--language"]).is_err());
++        assert!(args(&[]).unwrap().language.is_none());
++    }
++}
++
++impl Options {
++    pub fn companion_wanted(&self, saved: bool) -> bool {
++        self.split.unwrap_or(self.split_spike || saved)
++    }
++}
+diff --git a/crates/zakuro/src/lib.rs b/crates/zakuro/src/lib.rs
+index a03bc35..99493fd 100644
+--- a/crates/zakuro/src/lib.rs
++++ b/crates/zakuro/src/lib.rs
+@@ -129,6 +129,9 @@ pub fn run_with(linked: Option<Linked>, overlay: Option<Box<dyn GameOverlay>>) {
+         next_frame: Instant::now(),
+         skipped: 0,
+         shown: 0,
++        test_presented: 0,
++        test_started: None,
++        test_images: None,
+         spent: Spent::default(),
+         paused: false,
+         fast_forward_key: false,
+@@ -446,6 +449,9 @@ struct App {
+     skipped: u32,
+     /// frames shown since the title was last updated.
+     shown: u32,
++    test_presented: u64,
++    test_started: Option<Instant>,
++    test_images: Option<[GpuScreen; 2]>,
+     /// how long emulating and showing frames took since the title was last
+     /// updated, for the frame rate's log.
+     spent: Spent,
+@@ -704,7 +710,7 @@ impl App {
+         Config {
+             new3ds: self.options.new3ds,
+             data_dir: self.data_dir.clone(),
+-            language: self.settings.language.code(),
++            language: self.options.language.unwrap_or(self.settings.language).code(),
+             recompiled: self.options.recompiled.clone().filter(|_| !interpret).map(Into::into),
+             linked: self.linked.filter(|_| !interpret),
+             find_recompiled: !interpret,
+@@ -872,7 +878,13 @@ impl App {
+             attributes = attributes.with_position(winit::dpi::LogicalPosition::new(position.x + spot, position.y + 32));
+         }
+         let drafting = attributes.clone();
+-        let created = Backend::create(event_loop, attributes, RendererKind::Vulkan).or_else(|error| {
++        let shared = self.backend.as_ref().and_then(Backend::shared_device);
++        let created = if self.options.test_pattern && std::env::var_os("ZAKURO_TEST_COMPANION_GL").is_some() {
++            Err("synthetic probe requests the OpenGL fallback".to_owned())
++        } else { match shared {
++            Some(device) => Backend::create_shared(event_loop, attributes, device),
++            None => Backend::create(event_loop, attributes, RendererKind::Vulkan),
++        }}.or_else(|error| {
+             log::warn!("no Vulkan for the companion window, {error}");
+             Backend::create(event_loop, drafting, RendererKind::OpenGl)
+         });
+@@ -945,11 +957,7 @@ impl App {
+     /// whether this run wants a second window, the command line's say
+     /// over the settings'.
+     fn companion_wanted(&self) -> bool {
+-        self.options
+-            .split
+-            .unwrap_or(self.options.split_spike)
+-            .then_some(true)
+-            .unwrap_or_else(|| self.settings.companion_window != settings::CompanionWindow::Off)
++        self.options.companion_wanted(self.settings.companion_window != settings::CompanionWindow::Off)
+     }
+ 
+     /// which screen the second window shows, the spike keeping its bottom
+@@ -1870,7 +1878,7 @@ impl App {
+         let blank = |screen: Screen| ((std::sync::Arc::new(Vec::new()), screen.width(), screen.height()), None);
+         // the right eye's picture only while the 3D shows
+         let stereo = self.settings.stereo != settings::Stereo3d::Off;
+-        let (top, bottom, right) = match &mut self.game {
++        let (mut top, mut bottom, right) = match &mut self.game {
+             Some(game) => (
+                 shown(&mut game.system, Screen::Top),
+                 shown(&mut game.system, Screen::Bottom),
+@@ -1878,14 +1886,34 @@ impl App {
+             ),
+             None => (blank(Screen::Top), blank(Screen::Bottom), None),
+         };
++        if self.options.test_pattern {
++            if self.test_images.is_none() {
++                if let Some(device) = self.backend.as_ref().and_then(Backend::shared_device) {
++                    let make = || Ok::<_, String>([
++                        device.solid_screen(top.0.1, top.0.2, [220.0 / 255.0, 40.0 / 255.0, 40.0 / 255.0, 1.0])?,
++                        device.solid_screen(bottom.0.1, bottom.0.2, [40.0 / 255.0, 90.0 / 255.0, 220.0 / 255.0, 1.0])?,
++                    ]);
++                    match make() {
++                        Ok(images) => self.test_images = Some(images),
++                        Err(error) => log::warn!("GPU synthetic pattern unavailable: {error}"),
++                    }
++                }
++            }
++            if let Some(images) = &self.test_images {
++                top.0.0 = std::sync::Arc::new(Vec::new());
++                bottom.0.0 = std::sync::Arc::new(Vec::new());
++                top.1 = Some(images[0].clone());
++                bottom.1 = Some(images[1].clone());
++            }
++        }
+         let right = right.unwrap_or_else(|| blank(Screen::Top));
+         let Some(backend) = &mut self.backend else { return };
+         let (((top, top_width, top_height), top_gpu), ((bottom, bottom_width, bottom_height), bottom_gpu)) = (top, bottom);
+         let ((right, right_width, right_height), right_gpu) = right;
+         let result = backend.present(
+-            ScreenImage { width: top_width, height: top_height, pixels: &top, gpu: top_gpu },
+-            ScreenImage { width: bottom_width, height: bottom_height, pixels: &bottom, gpu: bottom_gpu },
+-            ScreenImage { width: right_width, height: right_height, pixels: &right, gpu: right_gpu },
++            ScreenImage { width: top_width, height: top_height, pixels: &top, gpu: top_gpu.clone() },
++            ScreenImage { width: bottom_width, height: bottom_height, pixels: &bottom, gpu: bottom_gpu.clone() },
++            ScreenImage { width: right_width, height: right_height, pixels: &right, gpu: right_gpu.clone() },
+             &overlay,
+         );
+         match result {
+@@ -1895,15 +1923,32 @@ impl App {
+                 event_loop.exit();
+             }
+         }
+-        // the spike's window: the bottom screen alone, straight from the
+-        // same frames the main window just drew. the GPU-referenced images
+-        // are passed to one presenter only, so the companion's copies go
+-        // up from the CPU's pixels.
++        // A shared presenter consumes the same GPU frame. A non-sharing
++        // fallback gets actual pixels, never an empty direct-image buffer.
++        let sharing = self.companion_backend.as_ref().and_then(Backend::shared_device)
++            .zip(self.backend.as_ref().and_then(Backend::shared_device))
++            .is_some_and(|(a, b)| std::sync::Arc::ptr_eq(&a, &b));
++        let fallback = if self.companion_backend.is_some() && !sharing {
++            let recover = |image: &Option<GpuScreen>| image.as_ref().map(|image| {
++                image.read_pixels().map(|(pixels, width, height)| (std::sync::Arc::new(pixels), width, height))
++            }).transpose();
++            match (recover(&top_gpu), recover(&bottom_gpu), recover(&right_gpu)) {
++                (Ok(top), Ok(bottom), Ok(right)) => Some((top, bottom, right)),
++                _ => {
++                    self.close_companion();
++                    log::warn!("the companion could not recover its exact GPU frame for the fallback");
++                    return;
++                }
++            }
++        } else { None };
+         if let Some(backend) = self.companion_backend.as_mut() {
++            let top_copy = fallback.as_ref().and_then(|copies| copies.0.as_ref());
++            let bottom_copy = fallback.as_ref().and_then(|copies| copies.1.as_ref());
++            let right_copy = fallback.as_ref().and_then(|copies| copies.2.as_ref());
+             let result = backend.present(
+-                ScreenImage { width: top_width, height: top_height, pixels: &top, gpu: None },
+-                ScreenImage { width: bottom_width, height: bottom_height, pixels: &bottom, gpu: None },
+-                ScreenImage { width: right_width, height: right_height, pixels: &right, gpu: None },
++                ScreenImage { width: top_width, height: top_height, pixels: top_copy.map_or(top.as_slice(), |one| one.0.as_slice()), gpu: sharing.then_some(top_gpu).flatten() },
++                ScreenImage { width: bottom_width, height: bottom_height, pixels: bottom_copy.map_or(bottom.as_slice(), |one| one.0.as_slice()), gpu: sharing.then_some(bottom_gpu).flatten() },
++                ScreenImage { width: right_width, height: right_height, pixels: right_copy.map_or(right.as_slice(), |one| one.0.as_slice()), gpu: sharing.then_some(right_gpu).flatten() },
+                 &overlay,
+             );
+             match result {
+@@ -1914,6 +1959,25 @@ impl App {
+                 }
+             }
+         }
++        if self.options.test_pattern {
++            let started = *self.test_started.get_or_insert_with(Instant::now);
++            self.test_presented += 1;
++            // Opt-in integration probe: exercise swapchain recreation and
++            // dropping one consumer while the main keeps showing GPU frames.
++            if std::env::var_os("ZAKURO_TEST_WINDOW_CYCLE").is_some() {
++                match self.test_presented {
++                    20 => if let Some(window) = &self.companion { let _ = window.request_inner_size(winit::dpi::LogicalSize::new(720, 540)); },
++                    40 => self.close_companion(),
++                    60 => if let Err(error) = self.open_companion(event_loop) { log::error!("test companion reopen: {error}"); event_loop.exit(); },
++                    _ => {}
++                }
++            }
++            if self.options.test_frames.is_some_and(|limit| self.test_presented >= limit) {
++                log::info!("presentation test complete: {} frames in {:.3}s ({:.1} fps), companion shared: {}, GPU images: {}", self.test_presented, started.elapsed().as_secs_f64(), (self.test_presented - 1) as f64 / started.elapsed().as_secs_f64(), sharing, self.test_images.is_some());
++                event_loop.exit();
++            }
++        }
++
+     }
+ }
+ 
+diff --git a/crates/zakuro/src/present.rs b/crates/zakuro/src/present.rs
+index 3e4fc4e..f3d1488 100644
+--- a/crates/zakuro/src/present.rs
++++ b/crates/zakuro/src/present.rs
+@@ -47,6 +47,19 @@ impl Backend {
+         }
+     }
+ 
++    /// A second surface on the renderer's existing device and queue.
++    pub fn create_shared(
++        event_loop: &ActiveEventLoop,
++        attributes: WindowAttributes,
++        shared: std::sync::Arc<SharedDevice>,
++    ) -> Result<(Window, Backend), String> {
++        let window = event_loop.create_window(attributes).map_err(|e| e.to_string())?;
++        let size = window.inner_size();
++        let presenter = VulkanPresenter::with_device(&window, (size.width.max(1), size.height.max(1)), shared)
++            .map_err(|e| e.to_string())?;
++        Ok((window, Backend::Vulkan(presenter)))
++    }
++
+     pub fn name(&self) -> &'static str {
+         match self {
+             Backend::OpenGl { presenter, .. } => presenter.name(),
+@@ -139,6 +152,7 @@ impl Backend {
+                 context,
+                 surface,
+             } => {
++                context.make_current(surface).map_err(|e| PresentError::Backend(e.to_string()))?;
+                 presenter.present(top, bottom, right, overlay)?;
+                 surface
+                     .swap_buffers(context)
+diff --git a/crates/zakuro/src/settings.rs b/crates/zakuro/src/settings.rs
+index c4fbc73..f3ec55e 100644
+--- a/crates/zakuro/src/settings.rs
++++ b/crates/zakuro/src/settings.rs
+@@ -218,6 +218,11 @@ pub enum Language {
+ }
+ 
+ impl Language {
++    pub fn parse(code: &str) -> Option<Self> {
++        const CODES: [&str; 12] = ["ja", "en", "fr", "de", "it", "es", "zh-Hans", "ko", "nl", "pt", "ru", "zh-Hant"];
++        CODES.iter().position(|one| *one == code).map(|index| Self::ALL[index])
++    }
++
+     pub const ALL: [Language; 12] = [
+         Language::Japanese,
+         Language::English,
+-- 
+2.56.0

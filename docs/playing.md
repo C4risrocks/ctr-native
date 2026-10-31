@@ -2,9 +2,9 @@
 
 ## Where the game comes from
 
-The app you built runs your dump directly; nothing is copied out of your
-original file, and deleting the dump breaks the app (the launcher points at
-it absolute).
+The app points to an external card image by absolute path: the original for
+NoCrypto, or its verified working copy for encrypted inputs. Keep that file;
+it is not bundled into the app. The original is never modified.
 
 ## Controls
 
@@ -20,9 +20,9 @@ dual-monitor mode: [walkthrough.md](walkthrough.md).
 ## Saves
 
 `<game>.app.ctr-native/home/Library/Application Support/zakuro/`
-— `nand` (system titles), `sdmc`, `user/savedata` (the game's save), `cache`,
-and `zakuro.log` (diagnostics). Saves follow the app: moving the app moves
-saves. Nothing gets overwritten between builds.
+— `nand`, `sdmc`, game saves and `zakuro.log` (diagnostics). Vulkan caches
+live separately under the sandbox HOME in `Library/Caches/zakuro/pipelines/`. Move the sibling sandbox with the app, then rebuild to anchor the new
+absolute paths. Nothing gets overwritten between builds.
 
 ## Troubleshooting
 
@@ -35,3 +35,11 @@ saves. Nothing gets overwritten between builds.
   runs warm from the sandbox's cache.
 - A bug report: `python3 scripts/bug_report.py "<game>.app"` — the zip
   collects logs, versions and the inputs record; no keys are ever inside.
+
+## Diagnostics and cleanup
+
+`bug_report.py` collects allowlisted metadata and up to 4 MiB per log, keeping
+its tail. It refuses links, binary content and recognizable key tables.
+`clean_cache.py <game.app> --dry-run` previews exactly the cache/old-log
+candidates. A running app is skipped; failure to inspect processes stops
+cleanup. Saves, settings and the current log are never candidates.

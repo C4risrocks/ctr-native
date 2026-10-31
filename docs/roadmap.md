@@ -62,3 +62,18 @@ windowed del audio (la `session kpi` lo da sola al cerrar la sesión).
 - `dm/games.py` perfiles afianzan `verified_md5`; el runtime lee su propio
   `settings.toml` en la sandbox — nada de prereescribir ajustes de jugador.
 - La lista de stages del builder no cambia; `docs/development.md` queda igual.
+
+
+## Auditoría de integridad — 0.2.0 (2026-10-31)
+
+La implementación posterior a F7/F8 corrige descifrado y límites de todos los
+contenedores, publicación transaccional, reutilización verificada, overrides
+reales de idioma/escala y diagnósticos/limpieza acotados. F7 ahora comparte el
+dispositivo Vulkan y un pool de hasta tres imágenes de presentación por surface,
+retenidas hasta finalizar sus consumidores. OpenGL recupera el frame seleccionado.
+
+La serie completa está fijada en `vendors.lock.json`, incluido el parche 0012.
+Resultados y límites de la validación: [audit-implementation.md](audit-implementation.md).
+Los estados históricos de las tablas anteriores no sustituyen esa evidencia.
+La validación física con dos monitores y el audio de una sesión real continúan
+separados de las pruebas sintéticas automatizadas.

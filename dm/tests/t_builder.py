@@ -48,3 +48,44 @@ class TestBuilder(unittest.TestCase):
         self.assertEqual(result, 1)
         events = [json.loads(line) for line in output.getvalue().splitlines()]
         self.assertTrue(any(event['ev'] == 'stage_end' and not event['ok'] for event in events))
+
+    def test_secondary_encryption_is_processed_even_with_clear_primary(self):
+        import struct
+        from dm.tests.fixtures import encrypted_partition
+        real_run = subprocess.run
+        def system_tool(command, *args, **kwargs):
+            if command[0] == '/usr/bin/codesign':
+                return subprocess.CompletedProcess(command, 0, '', '')
+            return real_run(command, *args, **kwargs)
+        for fixed in (True, False):
+            with self.subTest(fixed=fixed), TemporaryDirectory() as folder:
+                root = Path(folder)
+                primary = build_cxi_partition()
+                encrypted, clear = encrypted_partition(fixed=fixed)
+                payload = bytearray(0x400) + primary + encrypted
+                payload[0x100:0x104] = b'NCSD'
+                struct.pack_into('<I', payload, 0x104, len(payload) // 512)
+                struct.pack_into('<IIII', payload, 0x120, 2, len(primary) // 512,
+                                 (0x400 + len(primary)) // 512, len(encrypted) // 512)
+                rom = root / 'synthetic.3ds'
+                rom.write_bytes(payload)
+                host = root / 'host'
+                host.write_bytes(b'synthetic')
+                library = root / 'Library/Application Support/3dsrecomp/00040000000ec300.dylib'
+                library.parent.mkdir(parents=True)
+                library.write_bytes(b'synthetic')
+                keys = root / 'synthetic-table.tsv'
+                keys.write_text('2c=' + bytes(range(16)).hex() + '\n25=' + bytes(range(32, 48)).hex())
+                argv = [str(rom), '--zakuro-bin', str(host), '--no-icon', '--no-verify', '--progress', 'json']
+                if not fixed:
+                    argv += ['--keys', str(keys)]
+                output = io.StringIO()
+                with patch.object(Path, 'home', return_value=root), \
+                        patch('subprocess.run', side_effect=system_tool), contextlib.redirect_stdout(output):
+                    result = builder.main(argv)
+                self.assertEqual(result, 0, output.getvalue())
+                self.assertEqual(rom.read_bytes(), payload)
+                copies = list(root.glob('*_build/decrypted/*.3ds'))
+                self.assertEqual(len(copies), 1)
+                self.assertEqual(copies[0].read_bytes(), bytes(payload[:0x400 + len(primary)]) + clear)
+                self.assertTrue(any(root.glob('*.app/Contents/MacOS/ctr-native')))

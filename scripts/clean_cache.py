@@ -49,7 +49,8 @@ def candidates(app: Path, now: float) -> list[Path]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description=(__doc__ or "Remove inactive known caches without touching saves").splitlines()[0])
     parser.add_argument("target", type=Path, nargs="?", default=Path("."))
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)

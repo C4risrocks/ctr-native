@@ -111,7 +111,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Pack a 3DS dump into a per-game Mac app (ctr-native).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__.splitlines()[1].strip(),
+        epilog="Example: python3 scripts/build_app_from_3ds.py ~/Games/ALBW -o ~/Desktop",
     )
     parser.add_argument("game", help="a folder of .3ds/.3dz/.cci card images, or one card image")
     parser.add_argument("-o", "--output", default=None, help="where the .app lands")
@@ -155,7 +155,7 @@ def run(args: argparse.Namespace, progress: progress_module.Progress) -> bool:
         verify_hash(game_build, state, progress, args)
         state = progress.stage(4, stages_total, "decrypt a working copy")
         rom_for_app = game_build.source
-        if not game_build.partition.no_crypto:
+        if any(not part.no_crypto for part in ncch.parse_card_partitions(game_build.source)):
             rom_for_app = decrypt_stage(game_build, state, progress, args)
             game_build.working_source = rom_for_app
             _, game_build.partition, _ = ncch.parse_card_image(rom_for_app)
@@ -240,13 +240,7 @@ def load_smdh(build: Build) -> Smdh:
 
 def decrypt_stage(build: Build, state: progress_module.StageState,
                   progress: progress_module.Progress, args: argparse.Namespace) -> Path:
-    if not args.boot9 and not args.keys and not build.partition.fixed_key:
-        raise BuildFailed(
-            "this dump's partitions are encrypted and no keys arrived:\n"
-            "  --boot9 <your boot9.bin>   (most dumps; the copy stays in <id>_build)\n"
-            "  --keys <slot=hexkeu tsv>   (if you keep a derived table instead)"
-        )
-    progress.step(state, "deriving keys from your own console data")
+    progress.step(state, "preparing and verifying a clear working copy")
     out_dir = build.build_dir / "decrypted"
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / (build.source.stem + ".decrypted.3ds")

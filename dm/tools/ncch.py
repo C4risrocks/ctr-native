@@ -179,7 +179,7 @@ def parse_card_partitions(path: Path) -> list[PartitionInfo]:
     inspection, while parse_card_image requires an application there.
     """
     header = _read_exact(path, 0, 0x200)
-    if header[0x100:0x104] != b"NCSD":
+    if len(header) != NCCH_HEADER_SIZE or header[0x100:0x104] != b"NCSD":
         raise ContainerError(f"{path.name}: not an NCSD card image")
     table = struct.unpack_from("<16I", header, 0x120)
     entries = [(index, table[index * 2] * MEDIA_UNIT, table[index * 2 + 1] * MEDIA_UNIT)
@@ -203,7 +203,7 @@ def parse_ncch_header(path: Path, base: int, size: int) -> PartitionInfo:
     if base < 0 or size < NCCH_HEADER_SIZE or base + size > path.stat().st_size:
         raise ContainerError("NCCH partition exceeds file bounds")
     header = _read_exact(path, base, NCCH_HEADER_SIZE)
-    if len(header) < 0x1B8:
+    if len(header) != NCCH_HEADER_SIZE:
         raise ContainerError(f"{path.name}: truncated NCCH header")
     if header[0x100:0x104] == b"NCCH":
         content_size = struct.unpack_from("<I", header, 0x104)[0] * MEDIA_UNIT
@@ -396,7 +396,7 @@ def _utf16(entry: bytes, start_u16: int, end_u16: int) -> str:
 
 
 def _read_exact(path: Path, offset: int, length: int) -> bytes:
-    if length > MAX_READ:
+    if offset < 0 or length < 0 or length > MAX_READ:
         raise ContainerError(f"{path.name}: refusing a single read of {length:#x} bytes")
     with open(path, "rb", buffering=0) as file:
         file.seek(offset)

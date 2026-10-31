@@ -88,7 +88,8 @@ def read_diagnostic(path: Path) -> tuple[bytes, bool]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description=(__doc__ or "Collect bounded diagnostics without key material").splitlines()[0])
     parser.add_argument("app", type=Path, help="a ctr-native .app (or a <id>_build folder)")
     parser.add_argument("-o", "--output", type=Path, default=None)
     args = parser.parse_args(argv)

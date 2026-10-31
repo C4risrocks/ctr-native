@@ -83,3 +83,75 @@ class TestPack(unittest.TestCase):
         with self.assertRaises(pack_app.PackError):
             self.build(inputs=inputs)
         self.assertFalse((self.root / 'outside').exists())
+
+    def test_migration_conflicts_do_not_touch_either_save(self):
+        legacy = self.app / 'Contents/MacOS/sandbox/home/save.dat'
+        current = pack_app.sandbox_of(self.app)['home'] / 'save.dat'
+        legacy.parent.mkdir(parents=True)
+        current.parent.mkdir(parents=True)
+        legacy.write_bytes(b'OLD')
+        current.write_bytes(b'NEW')
+        with patch('dm.tools.user_data.runtime_in_use', return_value=False), self.assertRaises(pack_app.PackError):
+            self.build()
+        self.assertEqual(legacy.read_bytes(), b'OLD')
+        self.assertEqual(current.read_bytes(), b'NEW')
+        self.assertFalse((self.app / 'Contents/MacOS/ctr-native').exists())
+
+    def test_migration_keeps_an_archive_of_the_original(self):
+        legacy = self.app / 'Contents/MacOS/sandbox/home/save.dat'
+        legacy.parent.mkdir(parents=True)
+        legacy.write_bytes(b'OLD')
+        with patch('dm.tools.user_data.runtime_in_use', return_value=False):
+            self.build()
+        self.assertEqual((pack_app.sandbox_of(self.app)['home'] / 'save.dat').read_bytes(), b'OLD')
+        archive = self.app.with_name(self.app.name + '.ctr-native-legacy')
+        self.assertEqual((archive / 'Contents/MacOS/sandbox/home/save.dat').read_bytes(), b'OLD')
+
+    def test_migration_refuses_a_running_app(self):
+        legacy = self.app / 'Contents/MacOS/sandbox/home/save.dat'
+        legacy.parent.mkdir(parents=True)
+        legacy.write_bytes(b'OLD')
+        with patch('dm.tools.user_data.runtime_in_use', return_value=True), self.assertRaises(pack_app.PackError):
+            self.build()
+        self.assertFalse(pack_app.sandbox_of(self.app)['home'].exists())
+        self.assertEqual(legacy.read_bytes(), b'OLD')
+
+    def test_archive_failure_preserves_recovery_bundle(self):
+        legacy = self.app / 'Contents/MacOS/sandbox/home/save.dat'
+        legacy.parent.mkdir(parents=True)
+        legacy.write_bytes(b'OLD')
+        original_replace = Path.replace
+        def fail_archive(path, destination):
+            if str(destination).endswith('.ctr-native-legacy'):
+                raise OSError('synthetic archive failure')
+            return original_replace(path, destination)
+        with patch('dm.tools.user_data.runtime_in_use', return_value=False), \
+                patch.object(Path, 'replace', fail_archive), self.assertRaisesRegex(pack_app.PackError, 'preserved at'):
+            self.build()
+        recovered = list(self.root.glob('.Synthetic-*.app/Contents/MacOS/sandbox/home/save.dat'))
+        self.assertEqual(len(recovered), 1)
+        self.assertEqual(recovered[0].read_bytes(), b'OLD')
+
+    def test_migration_rejects_linked_ancestors(self):
+        foreign = self.root / 'foreign'
+        legacy = foreign / 'MacOS/sandbox/home/save.dat'
+        legacy.parent.mkdir(parents=True)
+        legacy.write_bytes(b'FOREIGN')
+        self.app.mkdir()
+        (self.app / 'Contents').symlink_to(foreign, target_is_directory=True)
+        with patch('dm.tools.user_data.runtime_in_use', return_value=False), self.assertRaises(pack_app.PackError):
+            self.build()
+        self.assertFalse(pack_app.sandbox_of(self.app)['home'].exists())
+        self.assertEqual(legacy.read_bytes(), b'FOREIGN')
+
+    def test_failed_publication_can_retry_migration(self):
+        legacy = self.app / 'Contents/MacOS/sandbox/home/save.dat'
+        legacy.parent.mkdir(parents=True)
+        legacy.write_bytes(b'OLD')
+        with patch('dm.tools.user_data.runtime_in_use', return_value=False):
+            with patch('dm.tools.pack_app.publish_bundle', side_effect=OSError('temporary failure')), \
+                    self.assertRaises(OSError):
+                self.build()
+            self.assertFalse((pack_app.sandbox_of(self.app)['home'] / 'save.dat').exists())
+            self.assertFalse(self.build())
+        self.assertEqual((pack_app.sandbox_of(self.app)['home'] / 'save.dat').read_bytes(), b'OLD')

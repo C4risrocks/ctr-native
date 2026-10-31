@@ -2,15 +2,17 @@
 
 Guía end-to-end para usar ctr-native. El camino corto:
 
-    tu dump legítimo (.3ds/.cia) → build_app_from_3ds.py → <Juego>.app + sandbox → doble clic
+    tu dump legítimo (.3ds/.cci) → build_app_from_3ds.py → <Juego>.app + sandbox → doble clic
 
 Nada del juego entra a git ni se copia fuera del disco: la app apunta a tu dump
 por ruta absoluta y el archivo original no se mueve ni se borra.
 
 ## 1. Qué necesitas
 
-- macOS 11+ en un Mac Apple Silicon (probado en M1 Pro, 16 GB).
-- Tu propia imagen de juego: tarjeta `.3ds`/`.3dz`/`.cci` o CIA (la legal tuya).
+- macOS 13.4+ en un Mac Apple Silicon (probado en M1 Pro, 16 GB).
+- Python 3.12+, Xcode Command Line Tools y los forks reconstruidos y compilados
+  según [development.md](development.md).
+- Tu propia imagen de juego: tarjeta `.3ds`/`.3dz`/`.cci` ; CIA aún no se empaqueta.
 
 ## 2. Construir la app
 
@@ -23,7 +25,7 @@ Flags útiles:
 | Flag | Para qué |
 |---|---|
 | `--app-name "Mi Nombre"` | nombre de la app distinto |
-| `--resolution-factor n` | factor de escala de la ventana |
+| `--scale n` | factor de escala de la ventana |
 | `--no-icon` | saltar el icono si el SMDH no acompaña |
 | `--allow-damaged` / `--no-verify` | versiones distintas al pin MD5 del profile |
 | `--progress json` | progreso legible por máquinas, una línea JSON por acontecimiento |
@@ -37,7 +39,10 @@ La salida produce dos carpetas que se llevan juntas:
 
 La llave `ctr-native.key` guarda las entradas (hash del ROM, sello del binario
 host, perfil, icono): si vuelves a hacer build sin cambios, nada se reescribe y
-la sandbox —y con ella el save— no se toca. Si cambias el binario host (por
+la sandbox —y con ella el save— no se toca. El idioma del build (`--language`, inglés por defecto) y la escala (`--scale`,
+3 por defecto) son overrides de ejecución: no reescriben settings.toml.
+
+Si cambias el binario host (por
 ejemplo, actualizando el port), el re-pack re-firma cada Mach-O ad-hoc sin
 tocar la sandbox.
 
@@ -112,7 +117,7 @@ dos ejecuciones divergentes del juego.
   `…/<Juego>.app.ctr-native/home/Library/Application Support/zakuro/zakuro.log`.
   Es el primer dato a leer: boot, presentación (Vulkan/GL), underruns de audio.
 - **Reporte de bug**: `python3 scripts/bug_report.py "<Juego>.app"` arma un
-  archivo con logs, versiones y entradas; **sin keys dentro, por diseño**.
+  archivo con logs, versiones y entradas; **solo metadatos y logs admitidos; rechaza enlaces y tablas de keys**.
 - **"MD5 does not match…"**: tu dump es otra edición (región/versión). O
   actualiza el pin del profile (`dm/games/<title id>/profile.tsv`) o corre con
   `--allow-damaged`.
@@ -124,14 +129,14 @@ dos ejecuciones divergentes del juego.
 
 ## 6. El estado conocido ("nativo-total")
 
-El boot nativo (CPU vía AOT, GPU por Vulkan/MoltenVK, audio HLE) está medido y
-funcionando. Lo que aún NO es perfecto —en `docs/roadmap.md` como F8—:
+El boot nativo usa AOT, raster Vulkan/MoltenVK y audio HLE. La companion
+Vulkan comparte dispositivo e imágenes con la main; OpenGL usa píxeles de
+reserva cuando no puede compartir ese dispositivo. `--split off` prevalece
+sobre la preferencia guardada.
 
-1. el shading de vértices puede caer a CPU según el juego (el raster es GPU);
-2. underruns de audio esporádicos ("the sound ran dry");
-3. el servicio cecd (StreetPass) deja avisos por comandos sin implementar (ALBW no lo usa);
-4. Vulkan pasa por MoltenVK→Metal (estándar del sector; no es Metal directo);
-5. KPI realtime en ventana sin formalizar del todo (G5 en curso).
+La implementación y las pruebas sintéticas no sustituyen una sesión física:
+quedan por registrar resultados en dos monitores reales y métricas de audio
+windowed. Metal directo continúa fuera del alcance.
 
 ## 7. Glosario
 

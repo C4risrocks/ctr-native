@@ -40,6 +40,8 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Callable
 
+from .user_data import UserData, open_regular, safe_path
+
 LAUNCHER_NAME = "ctr-native"
 KEY_NAME = "ctr-native.key"
 ICON_SIZES = (16, 32, 64, 128, 256, 512)
@@ -65,7 +67,7 @@ def sandbox_of(app: Path) -> dict[str, Path]:
     The launcher runs zakuro with HOME pointed at the sandbox: everything
     lands under `sandbox/home/Library/...` and never touches your global
     configuration."""
-    sandbox = app.with_name(app.name + ".ctr-native")
+    sandbox = UserData(app).sandbox
     home = sandbox / "home"
     app_data = home / "Library/Application Support/zakuro"
     return {
@@ -76,12 +78,14 @@ def sandbox_of(app: Path) -> dict[str, Path]:
         "nand": app_data / "nand",
         "sdmc": app_data / "sdmc",
         "log": app_data,
-        "cache": app_data / "cache",
+        "cache": home / "Library/Caches/zakuro/pipelines",
     }
 
 
 def ensure_sandbox(app: Path) -> None:
     for path in sandbox_of(app).values():
+        if not safe_path(path):
+            raise PackError(f"linked sandbox path: {path}")
         if path.name != "zakuro.log":  # the log is a file, its folder is the data root
             path.mkdir(parents=True, exist_ok=True)
 
@@ -371,34 +375,52 @@ def publish_bundle(candidate: Path, app: Path) -> None:
         raise OSError(ctypes.get_errno(), "atomic bundle exchange failed", str(app))
 
 
-def migrate_legacy(app: Path) -> bool:
+def rollback_migration(created: list[tuple[Path, int, int]]) -> None:
+    """Undo only files this attempt created, never a replacement at the same path."""
+    for path, device, inode in reversed(created):
+        if safe_path(path) and path.exists():
+            current = path.stat()
+            if (current.st_dev, current.st_ino) == (device, inode):
+                path.unlink()
+
+
+def migrate_legacy(app: Path) -> list[tuple[Path, int, int]] | None:
     """Create missing data only; preserve the old bundle as an explicit legacy archive."""
     legacy = app / "Contents/MacOS/sandbox"
     if not legacy.exists():
-        return False
+        return None
     from .user_data import runtime_in_use
 
     if runtime_in_use(app):
         raise PackError("close the app before migrating its legacy sandbox")
     archive = app.with_name(app.name + ".ctr-native-legacy")
-    if archive.exists():
+    if archive.exists() or not safe_path(archive):
         raise PackError(f"legacy archive already exists: {archive}; merge it manually first")
     root = sandbox_of(app)["sandbox"]
+    if not safe_path(legacy):
+        raise PackError("legacy sandbox contains links; manual migration is required")
     entries = list(legacy.rglob("*"))
-    if legacy.is_symlink() or any(path.is_symlink() for path in entries):
+    if any(not safe_path(path) for path in entries):
         raise PackError("legacy sandbox contains links; manual migration is required")
     files = [path for path in entries if path.is_file()]
     for path in entries:
         target = root / path.relative_to(legacy)
-        if target.is_symlink() or (target.exists() and (path.is_file() or not target.is_dir())):
+        if not safe_path(target) or (target.exists() and (path.is_file() or not target.is_dir())):
             raise PackError(f"sandbox collision: {target}; both copies were preserved")
-    for source in files:
-        target = root / source.relative_to(legacy)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with source.open("rb") as reader, target.open("xb") as writer:
-            shutil.copyfileobj(reader, writer)
-        shutil.copystat(source, target)
-    return True
+    created: list[tuple[Path, int, int]] = []
+    try:
+        for source in files:
+            target = root / source.relative_to(legacy)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with open_regular(source) as reader, target.open("xb") as writer:
+                info = os.fstat(writer.fileno())
+                created.append((target, info.st_dev, info.st_ino))
+                shutil.copyfileobj(reader, writer)
+            shutil.copystat(source, target)
+    except (OSError, ValueError):
+        rollback_migration(created)
+        raise
+    return created
 
 
 def pack(
@@ -449,6 +471,9 @@ def pack(
     app.parent.mkdir(parents=True, exist_ok=True)
     candidate = Path(tempfile.mkdtemp(prefix=f".{app.stem}-", suffix=".app", dir=app.parent))
     started = time.monotonic()
+    preserve_candidate = False
+    published = False
+    migrated = None
     try:
         contents = contents_of(candidate)
         macos, resources = contents / "MacOS", contents / "Resources"
@@ -475,15 +500,24 @@ def pack(
                 sign_executable(candidate / target.relative_to(app), sign_identity)
         codesign(candidate, sign_identity, say=say)
         verify_bundle(candidate, required)
-        legacy = migrate_legacy(app)
+        migrated = migrate_legacy(app)
         ensure_sandbox(app)
         publish_bundle(candidate, app)
-        if legacy:
-            candidate.replace(app.with_name(app.name + ".ctr-native-legacy"))
+        published = True
+        if migrated is not None:
+            preserve_candidate = True
+            try:
+                candidate.replace(app.with_name(app.name + ".ctr-native-legacy"))
+            except OSError as error:
+                raise PackError(f"new app published; original legacy bundle preserved at {candidate}") from error
+            preserve_candidate = False
         say(f"app packed in {int(time.monotonic() - started)}s: {app}")
         return False
     finally:
-        shutil.rmtree(candidate, ignore_errors=True)
+        if not published and migrated:
+            rollback_migration(migrated)
+        if not preserve_candidate:
+            shutil.rmtree(candidate, ignore_errors=True)
 
 
 def pack_inputs_hash(inputs: PackInputs, icon_pixels: list[tuple[int, int, int, int]] | None) -> str:

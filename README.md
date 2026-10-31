@@ -19,11 +19,13 @@ from *your* dump and holds nothing from any game in this repository.
 
 ## How to play
 
-1. **Requirements**: a Mac with Apple silicon, macOS 13.4+, Rust
-   (`rustup` via Homebrew works), and one-time builds of the two `vendors/`
-   forks (`cargo build --release` in each) plus one
-   `3dsrecomp build <rom>` per game (~4 min; it installs the game's AOT
-   library).
+1. **Requirements**: a Mac with Apple silicon, macOS 13.4+, Python 3.12+,
+   Xcode Command Line Tools and Rust. Reconstruct the pinned native sources
+   with `python3 scripts/bootstrap_vendors.py`, then build both forks using
+   the commands in [development.md](docs/development.md). Run one
+   `vendors/3dsrecomp/target/release/3dsrecomp build <rom>` per game to install
+   its AOT library. Vulkan presentation uses the system Vulkan loader and
+   MoltenVK; OpenGL remains a fallback.
 2. **Put your dump in a folder** (next to nothing else needed):
 
        ~/Games/ALBW/Legend of Zelda, The - A Link Between Worlds (USA) (En,Fr,Es).3ds
@@ -32,7 +34,7 @@ from *your* dump and holds nothing from any game in this repository.
 
        python3 scripts/build_app_from_3ds.py ~/Games/ALBW -o ~/Desktop
 
-   The app lands beside the dump by default, **self-contained** (host
+   The app lands beside the dump by default, with **bundled native code** (host
    binary + the game's AOT library inside), data beside it in
    `<name>.app.ctr-native/`. Verified dumps: `verified_md5=…`
    in the profile re-verifies every build (~1 s per GiB).
@@ -48,9 +50,12 @@ keys, which derive from your console's `boot9`:
 
     python3 scripts/build_app_from_3ds.py ~/Games/X --boot9 ~/keys/boot9.bin
 
+For newer crypto methods, provide the missing slots with `--keys <table.tsv>`;
+this can complement `--boot9`. Seeded crypto is unsupported.
+
 The decrypted copy is written into `<title id>_build/`, your keys never enter
-git or the app, and nothing ships them with the app. FixedKey games (many
-2013+ releases) and already-decrypted dumps need **no keys at all**.
+git or the app, and nothing ships them with the app. FixedKey applications and already-decrypted dumps need **no keys at all**.
+The original dump remains external to the app.
 
 ### Adding a game
 

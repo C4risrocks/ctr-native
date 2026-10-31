@@ -2,7 +2,7 @@ name: tests
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, 'fix/**']
   pull_request:
 
 jobs:
@@ -16,13 +16,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - name: parser and fixture tests (no game files, no console data)
-        run: python3 -m unittest discover -s dm/tests -t . -p "t_*.py" -v
-      - name: ruff (never reformat, ratchet policy)
-        run: |
-          pip install ruff
-          ruff check dm scripts
+          python-version: '3.12'
+      - name: synthetic test dependencies
+        run: python3 -m pip install cryptography ruff pyright
+      - name: container, CLI, privacy and lifecycle regressions
+        run: python3 -m unittest discover -s dm/tests -t . -p 't_*.py' -v
+      - name: ruff (check only)
+        run: ruff check dm scripts
+      - name: Python types
+        run: pyright dm scripts
+      - name: bounded synthetic mutation corpus
+        run: python3 -m dm.tests.fuzz_containers --iterations 300
 
   pack-smoke:
     runs-on: macos-latest
@@ -30,14 +34,21 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      # A synthetic build with no game: the packer's stages are
-      # exercises on fixtures; the smoke ends before a bundle could exist.
-      - name: synthetic pack inputs
-        run: |
-          python3 - <<'EOF'
-          from dm.tools.pack_app import PackInputs, pack_inputs_hash, app_bundle_id, app_name_from_smdh
-          assert app_bundle_id("00040000000EC300") == "org.ctrnative.00040000000ec300"
-          assert app_name_from_smdh("Name: Sub\n More") != ""
-          print("smoke ok")
-          EOF
+          python-version: '3.12'
+      - name: real signing and publication, synthetic host and assets
+        run: python3 -m unittest dm.tests.t_pack_native -v
+
+  native-tests:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: reconstruct exact native fork trees
+        run: python3 scripts/bootstrap_vendors.py
+      - name: install pinned compiler
+        run: rustup toolchain install 1.99.1 --profile minimal
+      - name: native runtime tests
+        working-directory: vendors/zakuro
+        run: cargo +1.99.1 test --locked --workspace
