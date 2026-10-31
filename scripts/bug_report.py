@@ -49,6 +49,8 @@ def sources_for(target: Path) -> list[tuple[Path, str]]:
                 if os.fstat(file.fileno()).st_size > MAX_FILE:
                     raise ValueError("oversized Info.plist")
                 metadata = plistlib.loads(file.read(MAX_FILE))
+                if not isinstance(metadata, dict):
+                    raise ValueError("Info.plist must be a dictionary")
                 identifier = str(metadata.get("CFBundleIdentifier", "")).split(".")[-1]
             builds = [p for p in target.parent.iterdir()
                       if p.name.lower() == f"{identifier.lower()}_build"]
@@ -65,13 +67,20 @@ def sources_for(target: Path) -> list[tuple[Path, str]]:
 
 
 def read_diagnostic(path: Path) -> tuple[bytes, bool]:
-    if any(needle in part.lower() for part in path.parts for needle in REFUSED):
+    if any(needle in path.name.lower() for needle in REFUSED):
         raise ValueError("key material name refused")
     with open_regular(path) as file:
         length = os.fstat(file.fileno()).st_size
         if path.suffix == ".log":
             file.seek(max(0, length - MAX_FILE))
         data = file.read(MAX_FILE)
+    if path.suffix == ".log" and length > MAX_FILE:
+        # A bounded tail can start within a valid UTF-8 codepoint. Discard
+        # only its at-most-three continuation bytes; validate the rest.
+        skipped = 0
+        while skipped < min(3, len(data)) and 0x80 <= data[skipped] < 0xC0:
+            skipped += 1
+        data = data[skipped:]
     data.decode("utf-8")  # binary material is never diagnostic text
     if b"\0" in data or KEY_ROW.search(data):
         raise ValueError("key-like or binary content refused")
