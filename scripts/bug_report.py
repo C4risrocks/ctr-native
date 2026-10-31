@@ -5,7 +5,7 @@
     python3 scripts/bug_report.py <game.app> [-o report.zip]
 
 Contents (text only, size-capped): the app's Info.plist summary, the packed
-inputs record (`inputs.tsv`), its Azahar log tail, the sandbox layout (names
+inputs record (`inputs.tsv`), its zakuro.log tails, the sandbox layout (names
 only), build-tool versions, and any <id>_build logs beside the ROM. Files that
 could be keys (`.keys`, boot9, movable.sed) are refused, not included.
 """
@@ -39,12 +39,11 @@ def main(argv: list[str] | None = None) -> int:
         for interesting in sorted((app / "Contents/Resources/ctr-native").glob("*")):
             if interesting.suffix in TEXT_SUFFIXES:
                 sources.append((interesting, f"pack/{interesting.name}"))
-        # whichever host lives in the launcher, its sandbox is the sibling folder
+        # the sandbox is the sibling folder of the app
         sandbox = app.with_name(app.name + ".ctr-native")
         if not sandbox.is_dir():
             sandbox = app / "Contents/MacOS/sandbox"
-        for log_name in ("zakuro.log", "zakuro.previous.log",
-                         "home/Library/Application Support/Azahar/log/azahar_log.txt"):
+        for log_name in ("zakuro.log", "zakuro.previous.log"):
             candidate = sandbox / log_name
             if candidate.exists() and candidate.stat().st_size:
                 sources.append((candidate, f"sandbox/{Path(log_name).name}"))

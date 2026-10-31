@@ -9,7 +9,7 @@ lo cuentan en distintos niveles.
   clic: build, controles, atajos (F1/F9/F10/F11/Esc), modo dual monitor (F7),
   diagnóstico y glosario.
 - **[playing.md](playing.md)** — controles y troubleshooting clásico del host
-  (Azahar/zakuro, sandbox, shader cache, bug reports sin llaves).
+  (sandbox, shader cache, modo dual monitor, bug reports sin llaves).
 
 ## Diagramas (HTML explorables, con animación Live/Still)
 

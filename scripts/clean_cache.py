@@ -5,9 +5,8 @@
     python3 scripts/clean_cache.py <game.app or games folder> [--dry-run]
 
 Keeps what a running app could still open (live processes are detected by
-their open files) and touches only inside `…/Azahar/cache` and `log` folders
-from scratch builds older than this kernel's mtime — saves and config are
-never candidates.
+their open files) and touches only inside `…/zakuro/cache` folders and stale
+`zakuro.log` files — saves and settings are never candidates.
 """
 
 from __future__ import annotations
@@ -24,11 +23,11 @@ LOG_STALE_SECONDS = 30 * 24 * 3600
 
 
 def active_files() -> set[str]:
-    """Filenames currently open by running Azahar processes, for skip-if-live."""
+    """Filenames currently open by running zakuro processes, for skip-if-live."""
     try:
         import subprocess
 
-        pids = subprocess.run(["/usr/bin/pgrep", "-f", "MacOS/azahar"],
+        pids = subprocess.run(["/usr/bin/pgrep", "-f", "MacOS/zakuro-host"],
                               capture_output=True, text=True)
         files: set[str] = set()
         for pid in pids.stdout.split():
@@ -61,11 +60,9 @@ def main(argv: list[str] | None = None) -> int:
                 if item.name.endswith(CANDIDATE_SUFFIXES):
                     size = sum(f.stat().st_size for f in item.rglob("*") if f.is_file())
                     saved_candidates.append((item, size))
-        log_dir = sandbox / "home/Library/Application Support/Azahar/log"
-        if log_dir.is_dir():
-            for item in log_dir.iterdir():
-                if time.time() - item.stat().st_mtime > LOG_STALE_SECONDS:
-                    saved_candidates.append((item, item.stat().st_size))
+        log_file = sandbox / "home/Library/Application Support/zakuro/zakuro.previous.log"
+        if log_file.is_file() and time.time() - log_file.stat().st_mtime > LOG_STALE_SECONDS:
+            saved_candidates.append((log_file, log_file.stat().st_size))
 
     removed = 0
     for item, size in saved_candidates:

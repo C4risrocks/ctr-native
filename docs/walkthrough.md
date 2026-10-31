@@ -11,9 +11,6 @@ por ruta absoluta y el archivo original no se mueve ni se borra.
 
 - macOS 11+ en un Mac Apple Silicon (probado en M1 Pro, 16 GB).
 - Tu propia imagen de juego: tarjeta `.3ds`/`.3dz`/`.cci` o CIA (la legal tuya).
-- Si la imagen va encriptada, tus `boot9` y keys: **nunca salen de tu máquina**
-  y no se incluyen en ninguna app ni en los reportes de bug.
-- (Opcional, host clásico) Azahar instalado en `/Applications/Azahar.app`.
 
 ## 2. Construir la app
 
@@ -25,8 +22,6 @@ Flags útiles:
 
 | Flag | Para qué |
 |---|---|
-| `--host zakuro` | (default) host Rust AOT nativo: binario + librería AOT dentro del bundle |
-| `--host azahar` | el host clásico de Azahar, mismo sandbox por juego |
 | `--app-name "Mi Nombre"` | nombre de la app distinto |
 | `--resolution-factor n` | factor de escala de la ventana |
 | `--no-icon` | saltar el icono si el SMDH no acompaña |
@@ -56,10 +51,9 @@ Doble clic en `<Juego>.app`. El launcher apunta al dump absoluto, pone `HOME`
 en la sandbox hermana (por eso ninguna configuración global del Mac se toca) y
 exec el host:
 
-- Con `--host zakuro`: corre el código del juego **AOT recompilado a arm64**
+- El host es **zakuro**: corre el código del juego **AOT recompilado a arm64**
   (no interpreta), raster hardware por Vulkan (MoltenVK) con present FIFO,
   audio por el path HLE del DSP.
-- Con `--host azahar`: corre `-f <rom>` con el mismo flujo de sandbox.
 
 Controles (el teclado sigue el perfil clásico; un mando de consola o Xbox se
 detecta solo): flechas = círculo pad, botones según el mapeado de la ventana

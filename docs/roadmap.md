@@ -59,5 +59,6 @@ windowed del audio (la `session kpi` lo da sola al cerrar la sesión).
 
 - Nada del juego ni de keys entra a git (`.gitignore` ya lo bloquea).
 - Los parsers no cambian en F7/F8; G3 añade su test in-crate del fork.
-- `KNOWN_KEYS` no se toca (sin settings nuevos de Azahar).
+- `dm/games.py` perfiles afianzan `verified_md5`; el runtime lee su propio
+  `settings.toml` en la sandbox — nada de prereescribir ajustes de jugador.
 - La lista de stages del builder no cambia; `docs/development.md` queda igual.

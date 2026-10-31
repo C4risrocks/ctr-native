@@ -30,11 +30,11 @@ carrier `build_ipa_from_nsp.py`'s layout:
    row-major 8x8 Morton tiles — verified against retail icons; 3dbrew's
    "recursive" note predates their retail layout) → PNG upscales → iconutil.
 5. **pack** — `<name>.app` assembled: Info.plist, ad-hoc codesign, launcher
-   script with **baked absolute paths and a HOME redirection** — because
-   Azahar's `LaunchQtFrontend` chdirs into its own bundle on macOS, a
-   cwd-side user directory is unreachable; `$HOME` inside the bundle points
-   every config/nand/sdmc/cache/log write home. Save data stays across
-   rebuilds: the `.key` reuse check never deletes or patches the sandbox.
+   script with **baked absolute paths and a HOME redirection** — the host
+   resolves its paths under `$HOME`, so the launcher points it at the
+   sibling sandbox and every settings/nand/sdmc/cache/log write lands
+   there. Save data stays across rebuilds: the `.key` reuse check never
+   deletes or patches the sandbox.
 
 `--progress json` emits one JSON per line: `stage`/`step`/`progress` with
 `frac`/`eta`, `stage_end`, and `say`. Bars otherwise, plain lines behind
@@ -50,20 +50,20 @@ F0..F2' verificadas: see `docs/zakuro-macos.md` (measured KPIs). El pipeline del
       Contents/MacOS/zakuro-host  baklava binario del host runtime Rust
       Contents/Resources/game/    <title>.dylib + <title>.hints (AOT 3dsrecomp)
 
-Sandbox hermano `<name>.app.ctr-native/`: settings.toml, savedata, mods (Luma/Azahar),
-cheats, shaders y zakuro.log. Los dos hosts coexisten en subcarpetas.
+Sandbox hermano `<name>.app.ctr-native/`: settings.toml, savedata, mods,
+cheats, shaders y zakuro.log.
 
 ## Reuse policy
 
 `<id>_build/` keeps: `decrypted/`, `logs/<stage>.log`. The app's signature
-(`ctr-native.key`) covers the ROM hash, Azahar binary stamp, profile hash,
+(`ctr-native.key`) covers the ROM hash, zakuro-host stamp, profile pin,
 toolkit version and launcher text; unchanged inputs skip everything except
 the final code sign. `*` are atomic (tmp+rename); the sandbox is only ever
 created, never updated.
 
 ## The native goal (Fase 2 sketch)
 
-- `dm/host`: the Azahar envelope resolved toward a CTR host of our own
+- `dm/host`: the envelope resolved toward a CTR host of our own
   (services: GSP→GPU, DSP path, APT/FS/HID semantics), the nxnative
   equivalent of a Horizon stand-in but for CTR semantics;
 - CPU: ARM11 (`code.bin`, which our decrypted container already exposes

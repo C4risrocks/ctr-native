@@ -7,10 +7,8 @@ Structure (mirrors nxnative's shape):
     scripts/clean_cache.py          delete old caches, keep saves/config
     dm/tools/ncch.py                NCSD/NCCH/ExeFS/SMDH parsers (bounded reads)
     dm/tools/decrypt.py             NCCH decryption (--boot9/--keys, superblock-verified)
-    dm/tools/config_ini.py          template → per-game qt-config writer
     dm/tools/pack_app.py            the .app packer (launcher, plist, icon, signatures)
     dm/games/<title id>/            per-game profiles: profile.tsv + README.md
-    dm/templates/qt-config.ini      shared Azahar defaults (Vulkan/MoltenVK, async shaders)
     dm/tests/                       synthetic-fixture unittests (no game data)
     docs/                           development.md (pipeline), playing.md (users)
 
@@ -22,11 +20,10 @@ Structure (mirrors nxnative's shape):
   never bundle, never send to a collector (bug_report.py refuses them).
 - Tests are synthetic: fixtures are manufactured from the format public docs
   (`dm/tests/fixtures.py`); guard bounded reads and clean failures.
-- `dm/games.py::KNOWN_KEYS` is the guardrail for what a profile may set.
+- `dm/games.py` profiles pin the dump's `verified_md5`; the runtime reads its
+  own `settings.toml` in the sandbox — never prewrite player settings.
 - Progress must never crash a build; wrap prints in try/except at the seam
   (`dm/tools/progress.py::Progress._raw`).
-- Config rendering keeps Azahar's `key\default` marks coherent; when you add a
-  template key, add the explicit `\default=false` pair.
 - The `.app`'s sandbox is user data: builds may create, never update, and the
   reuse signature must cover every file the launcher depends on.
 
@@ -34,6 +31,5 @@ Structure (mirrors nxnative's shape):
 
 - New or changed parsers: add a synthetic test stage here, and a fuzz target
   under `dm/tests` (Atheris optional; blind mutation corpus accepted).
-- New Azahar setting surfaced per-game: extend `KNOWN_KEYS` and the template.
 - The CLI: keep `-h` and `--progress json` complete; `docs/development.md`
   documents the stage list (update it when stages change).
