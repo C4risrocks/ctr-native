@@ -165,3 +165,44 @@ class UserDataTests(unittest.TestCase):
         with patch.object(user_data, "active_files", return_value=set()), redirect_stdout(io.StringIO()):
             self.assertEqual(clean_cache.main([str(self.app)]), 0)
         self.assertFalse(cache.exists())
+
+    def test_runtime_detection_normalizes_safe_parent_segments(self):
+        from dm.tools import user_data
+        (self.root / "nested").mkdir()
+        alias = self.root / "nested/../Synthetic Game.app"
+        self.assertTrue(user_data.runtime_in_use(alias, {self.app / "Contents/MacOS/zakuro-host"}))
+
+    def test_parent_segments_never_hide_directory_symlinks(self):
+        from dm.tools import user_data
+        external = self.root / "external"
+        external.mkdir()
+        (self.root / "link").symlink_to(external)
+        alias = self.root / "link/../Synthetic Game.app"
+        self.assertFalse(user_data.safe_path(alias))
+        with self.assertRaises(OSError):
+            user_data.runtime_in_use(alias, set())
+
+    def test_report_ignores_non_dictionary_plist(self):
+        import plistlib
+        contents = self.app / "Contents"
+        contents.mkdir()
+        (contents / "Info.plist").write_bytes(plistlib.dumps([]))
+        with self.report() as bundle:
+            self.assertIn("report.txt", bundle.namelist())
+
+    def test_report_keeps_utf8_tail_when_cut_inside_codepoint(self):
+        (self.user / "zakuro.log").write_bytes(("é" * (bug_report.MAX_FILE // 2)).encode() + b"FINAL")
+        with self.report() as bundle:
+            data = bundle.read("sandbox/zakuro.log")
+            data.decode("utf-8")
+            self.assertTrue(data.endswith(b"FINAL"))
+            self.assertLessEqual(len(data), bug_report.MAX_FILE)
+
+    def test_report_does_not_treat_an_app_title_as_a_key_filename(self):
+        app = self.root / "Keys and Doors.app"
+        app.mkdir()
+        user = app.with_name(app.name + ".ctr-native") / "home/Library/Application Support/zakuro"
+        user.mkdir(parents=True)
+        (user / "zakuro.log").write_text("runtime evidence")
+        with self.report(app) as bundle:
+            self.assertEqual(bundle.read("sandbox/zakuro.log"), b"runtime evidence")

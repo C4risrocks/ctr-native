@@ -44,18 +44,33 @@ class UserData:
 
 
 def canonical_path(path: Path) -> Path:
-    """Normalize macOS system aliases without following player symlinks."""
+    """Normalize system aliases and safe dot segments, never a hidden symlink."""
     absolute = path.absolute()
     if sys.platform == "darwin":
         for alias in (Path("/var"), Path("/tmp")):
             if absolute == alias or absolute.is_relative_to(alias):
-                return Path("/private") / absolute.relative_to("/")
-    return absolute
+                absolute = Path("/private") / absolute.relative_to("/")
+                break
+    if ".." in absolute.parts:
+        # Check the original spelling first. normpath alone would erase the
+        # linked directory in link/../app and could bypass both confinement
+        # and matching of lsof's canonical executable paths.
+        if any(part.is_symlink() for part in (absolute, *absolute.parents)):
+            raise OSError(f"ambiguous linked parent path: {path}")
+        current = Path(absolute.anchor)
+        for part in absolute.parts[1:]:
+            if part == ".." and not current.is_dir():
+                raise OSError(f"parent traversal through a missing directory: {path}")
+            current /= part
+    return Path(os.path.normpath(absolute))
 
 
 def safe_path(path: Path) -> bool:
     """Reject symlinks at every existing level, including directory aliases."""
-    absolute = canonical_path(path)
+    try:
+        absolute = canonical_path(path)
+    except OSError:
+        return False
     return not any(part.is_symlink() for part in (absolute, *absolute.parents))
 
 
