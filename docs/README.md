@@ -24,8 +24,13 @@ previas no certifican la sincronización ni publicación del código actual.
   *El runtime de una partida*: CPU AOT + kernel HLE + raster Vulkan/portability,
   las dos ventanas (F7) y la sandbox de datos.
 - [f7-ventana-segunda.workflow.html](diagrams/f7-ventana-segunda.workflow.html) —
-  *El modo segunda ventana*: cómo se pide (panel Settings / CLI), qué cambia en
-  vivo, y la línea `session kpi` al cerrar.
+  *El modo segunda ventana*: cómo se pide (menú de Esc / Settings / CLI), qué
+  cambia en vivo, y la línea `session kpi` al cerrar.
+
+## Planes
+
+- **[plan-metal.md](plan-metal.md)** — el plan del backend Metal (M0..M3) y
+  el estado del spike M0 (60.1 fps on-screen, empate con Vulkan).
 
 ## Para el que mantiene el repo
 

@@ -1,0 +1,654 @@
+From 6b7231b8178500943f336fed3666b05699cc68ed Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Sat, 31 Oct 2026 21:23:03 -0600
+Subject: [PATCH] =?UTF-8?q?gpu:=20the=20Metal=20spike=20(M0)=20=E2=80=94?=
+ =?UTF-8?q?=20one=20window,=20one=20CAMetalLayer,=20a=20timed=20triangle?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+a --renderer metal backend behind the metal feature: device + queue +
+a CAMetalLayer hung on the window's NSView, one oversized triangle
+presented per frame through a small MSL source, drawable sizing tied
+to the window's scale. the presentation-test completion line stays
+backend-agnostic. this spike answers M0's numbers question: the
+on-screen present loop paces at 60 fps like the Vulkan path does.
+---
+ Cargo.lock                             | 127 ++++++++++++++++++--
+ crates/zakuro-gpu/Cargo.toml           |  14 +++
+ crates/zakuro-gpu/src/backend/metal.rs | 154 +++++++++++++++++++++++++
+ crates/zakuro-gpu/src/backend/mod.rs   |   2 +
+ crates/zakuro-gpu/src/renderer.rs      |   2 +
+ crates/zakuro/Cargo.toml               |   3 +
+ crates/zakuro/src/present.rs           |  67 ++++++++++-
+ 7 files changed, 357 insertions(+), 12 deletions(-)
+ create mode 100644 crates/zakuro-gpu/src/backend/metal.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index eb8bd15..01ef2f5 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2453,10 +2453,10 @@ dependencies = [
+  "block2 0.5.1",
+  "libc",
+  "objc2 0.5.2",
+- "objc2-core-data",
+- "objc2-core-image",
++ "objc2-core-data 0.2.2",
++ "objc2-core-image 0.2.2",
+  "objc2-foundation 0.2.2",
+- "objc2-quartz-core",
++ "objc2-quartz-core 0.2.2",
+ ]
+ 
+ [[package]]
+@@ -2467,10 +2467,17 @@ checksum = "d49e936b501e5c5bf01fda3a9452ff86dc3ea98ad5f283e1455153142d97518c"
+ dependencies = [
+  "bitflags 2.13.2",
+  "block2 0.6.2",
++ "libc",
+  "objc2 0.6.4",
++ "objc2-cloud-kit 0.3.2",
++ "objc2-core-data 0.3.2",
+  "objc2-core-foundation",
+  "objc2-core-graphics",
++ "objc2-core-image 0.3.2",
++ "objc2-core-text",
++ "objc2-core-video",
+  "objc2-foundation 0.3.2",
++ "objc2-quartz-core 0.3.2",
+ ]
+ 
+ [[package]]
+@@ -2501,6 +2508,17 @@ dependencies = [
+  "objc2-foundation 0.2.2",
+ ]
+ 
++[[package]]
++name = "objc2-cloud-kit"
++version = "0.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "73ad74d880bb43877038da939b7427bba67e9dd42004a18b809ba7d87cee241c"
++dependencies = [
++ "bitflags 2.13.2",
++ "objc2 0.6.4",
++ "objc2-foundation 0.3.2",
++]
++
+ [[package]]
+ name = "objc2-contacts"
+ version = "0.2.2"
+@@ -2546,6 +2564,17 @@ dependencies = [
+  "objc2-foundation 0.2.2",
+ ]
+ 
++[[package]]
++name = "objc2-core-data"
++version = "0.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0b402a653efbb5e82ce4df10683b6b28027616a2715e90009947d50b8dd298fa"
++dependencies = [
++ "bitflags 2.13.2",
++ "objc2 0.6.4",
++ "objc2-foundation 0.3.2",
++]
++
+ [[package]]
+ name = "objc2-core-foundation"
+ version = "0.3.2"
+@@ -2553,7 +2582,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "2a180dd8642fa45cdb7dd721cd4c11b1cadd4929ce112ebd8b9f5803cc79d536"
+ dependencies = [
+  "bitflags 2.13.2",
++ "block2 0.6.2",
+  "dispatch2",
++ "libc",
+  "objc2 0.6.4",
+ ]
+ 
+@@ -2564,10 +2595,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "e022c9d066895efa1345f8e33e584b9f958da2fd4cd116792e15e07e4720a807"
+ dependencies = [
+  "bitflags 2.13.2",
++ "block2 0.6.2",
+  "dispatch2",
++ "libc",
+  "objc2 0.6.4",
+  "objc2-core-foundation",
+  "objc2-io-surface",
++ "objc2-metal 0.3.2",
+ ]
+ 
+ [[package]]
+@@ -2579,7 +2613,17 @@ dependencies = [
+  "block2 0.5.1",
+  "objc2 0.5.2",
+  "objc2-foundation 0.2.2",
+- "objc2-metal",
++ "objc2-metal 0.2.2",
++]
++
++[[package]]
++name = "objc2-core-image"
++version = "0.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e5d563b38d2b97209f8e861173de434bd0214cf020e3423a52624cd1d989f006"
++dependencies = [
++ "objc2 0.6.4",
++ "objc2-foundation 0.3.2",
+ ]
+ 
+ [[package]]
+@@ -2594,6 +2638,31 @@ dependencies = [
+  "objc2-foundation 0.2.2",
+ ]
+ 
++[[package]]
++name = "objc2-core-text"
++version = "0.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0cde0dfb48d25d2b4862161a4d5fcc0e3c24367869ad306b0c9ec0073bfed92d"
++dependencies = [
++ "bitflags 2.13.2",
++ "objc2 0.6.4",
++ "objc2-core-foundation",
++ "objc2-core-graphics",
++]
++
++[[package]]
++name = "objc2-core-video"
++version = "0.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d425caf1df73233f29fd8a5c3e5edbc30d2d4307870f802d18f00d83dc5141a6"
++dependencies = [
++ "bitflags 2.13.2",
++ "objc2 0.6.4",
++ "objc2-core-foundation",
++ "objc2-core-graphics",
++ "objc2-io-surface",
++]
++
+ [[package]]
+ name = "objc2-encode"
+ version = "4.1.0"
+@@ -2620,6 +2689,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "e3e0adef53c21f888deb4fa59fc59f7eb17404926ee8a6f59f5df0fd7f9f3272"
+ dependencies = [
+  "bitflags 2.13.2",
++ "block2 0.6.2",
++ "libc",
+  "objc2 0.6.4",
+  "objc2-core-foundation",
+ ]
+@@ -2670,6 +2741,20 @@ dependencies = [
+  "objc2-foundation 0.2.2",
+ ]
+ 
++[[package]]
++name = "objc2-metal"
++version = "0.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a0125f776a10d00af4152d74616409f0d4a2053a6f57fa5b7d6aa2854ac04794"
++dependencies = [
++ "bitflags 2.13.2",
++ "block2 0.6.2",
++ "dispatch2",
++ "objc2 0.6.4",
++ "objc2-core-foundation",
++ "objc2-foundation 0.3.2",
++]
++
+ [[package]]
+ name = "objc2-quartz-core"
+ version = "0.2.2"
+@@ -2680,7 +2765,24 @@ dependencies = [
+  "block2 0.5.1",
+  "objc2 0.5.2",
+  "objc2-foundation 0.2.2",
+- "objc2-metal",
++ "objc2-metal 0.2.2",
++]
++
++[[package]]
++name = "objc2-quartz-core"
++version = "0.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "96c1358452b371bf9f104e21ec536d37a650eb10f7ee379fff67d2e08d537f1f"
++dependencies = [
++ "bitflags 2.13.2",
++ "block2 0.6.2",
++ "libc",
++ "objc2 0.6.4",
++ "objc2-core-foundation",
++ "objc2-core-graphics",
++ "objc2-core-video",
++ "objc2-foundation 0.3.2",
++ "objc2-metal 0.3.2",
+ ]
+ 
+ [[package]]
+@@ -2702,13 +2804,13 @@ dependencies = [
+  "bitflags 2.13.2",
+  "block2 0.5.1",
+  "objc2 0.5.2",
+- "objc2-cloud-kit",
+- "objc2-core-data",
+- "objc2-core-image",
++ "objc2-cloud-kit 0.2.2",
++ "objc2-core-data 0.2.2",
++ "objc2-core-image 0.2.2",
+  "objc2-core-location",
+  "objc2-foundation 0.2.2",
+  "objc2-link-presentation",
+- "objc2-quartz-core",
++ "objc2-quartz-core 0.2.2",
+  "objc2-symbols",
+  "objc2-uniform-type-identifiers",
+  "objc2-user-notifications",
+@@ -4728,6 +4830,13 @@ dependencies = [
+  "glow",
+  "log",
+  "naga",
++ "objc2 0.6.4",
++ "objc2-app-kit 0.3.2",
++ "objc2-core-foundation",
++ "objc2-core-graphics",
++ "objc2-foundation 0.3.2",
++ "objc2-metal 0.3.2",
++ "objc2-quartz-core 0.3.2",
+  "png",
+  "raw-window-handle",
+  "rayon",
+diff --git a/crates/zakuro-gpu/Cargo.toml b/crates/zakuro-gpu/Cargo.toml
+index 2afc90d..b2a2f78 100644
+--- a/crates/zakuro-gpu/Cargo.toml
++++ b/crates/zakuro-gpu/Cargo.toml
+@@ -8,6 +8,7 @@ license.workspace = true
+ default = ["jit"]
+ opengl = ["dep:glow"]
+ vulkan = ["dep:ash", "dep:ash-window", "dep:naga"]
++metal = ["dep:objc2", "dep:objc2-foundation", "dep:objc2-metal", "dep:objc2-quartz-core", "dep:objc2-core-graphics", "dep:objc2-core-foundation", "dep:objc2-app-kit"]
+ # the shaders the CPU runs compiled to the host's code instead of interpreted
+ jit = ["dep:cranelift-codegen", "dep:cranelift-frontend", "dep:cranelift-jit", "dep:cranelift-module", "dep:cranelift-native"]
+ 
+@@ -37,3 +38,16 @@ cranelift-frontend = { version = "0.135", optional = true }
+ cranelift-jit = { version = "0.135", optional = true }
+ cranelift-module = { version = "0.135", optional = true }
+ cranelift-native = { version = "0.135", optional = true }
++
++[target.'cfg(target_os = "macos")'.dependencies]
++objc2 = { version = "0.6", optional = true }
++objc2-foundation = { version = "0.3", optional = true }
++objc2-metal = { version = "0.3", optional = true, features = [
++    "MTLDevice", "MTLCommandQueue", "MTLCommandBuffer", "MTLCommandEncoder",
++    "MTLRenderPass", "MTLRenderCommandEncoder", "MTLRenderPipeline",
++    "MTLLibrary", "MTLDrawable", "MTLPixelFormat", "MTLTypes",
++] }
++objc2-quartz-core = { version = "0.3", optional = true, features = ["CAMetalLayer"] }
++objc2-core-graphics = { version = "0.3", optional = true, features = ["CGBase"] }
++objc2-app-kit = { version = "0.3", optional = true, features = ["NSResponder", "NSView"] }
++objc2-core-foundation = { version = "0.3", optional = true }
+diff --git a/crates/zakuro-gpu/src/backend/metal.rs b/crates/zakuro-gpu/src/backend/metal.rs
+new file mode 100644
+index 0000000..54bac3a
+--- /dev/null
++++ b/crates/zakuro-gpu/src/backend/metal.rs
+@@ -0,0 +1,154 @@
++//! The Metal spike (M0): one window, one CAMetalLayer, a timed clear+present.
++//!
++//! The goal this phase answers with numbers: pipeline creation cost, the
++//! per-frame present cost, and whether the CAMetalLayer glue over the raw
++//! winit window is sane — before promising a full PICA raster backend.
++use objc2::rc::Retained;
++use objc2::runtime::{AnyObject, ProtocolObject};
++use objc2_core_foundation::CGSize;
++use objc2_foundation::NSString;
++use objc2_metal::{
++    MTLClearColor, MTLLoadAction, MTLPixelFormat, MTLRenderPassDescriptor,
++    MTLRenderPipelineDescriptor, MTLRenderPipelineState, MTLStoreAction,
++    MTLCommandBuffer, MTLCommandQueue, MTLCommandEncoder as _, MTLDevice, MTLLibrary,
++    MTLRenderCommandEncoder as _, MTLCreateSystemDefaultDevice,
++};
++use objc2_quartz_core::CAMetalLayer;
++
++/// one presenter: device, queue, layer, and the trivial pipeline of the spike.
++pub struct MetalPresenter {
++    device: Retained<ProtocolObject<dyn MTLDevice>>,
++    queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
++    pipeline: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
++    pub layer: Retained<CAMetalLayer>,
++    scale: f64,
++    frames: u64,
++    started: std::time::Instant,
++}
++
++const SHADER: &str = r"
++#include <metal_stdlib>
++using namespace metal;
++struct VOut { float4 position [[position]]; float4 color [[user(locn0)]]; };
++vertex VOut spike_vertex(uint vid [[vertex_id]]) {
++    VOut out;
++    float x = float((vid >> 1) & 1) * 4.0 - 1.0;
++    float y = float(vid & 1) * 4.0 - 1.0;
++    out.position = float4(x, y, 0.0, 1.0);
++    out.color = float4(0.0, 0.35, 1.0, 1.0);
++    return out;
++}
++fragment float4 spike_fragment(VOut in [[stage_in]]) {
++    return in.color;
++}
++";
++
++fn ns(s: &str) -> Retained<NSString> {
++    NSString::from_str(s)
++}
++
++impl MetalPresenter {
++    /// creates the device + layer and installs it into the window's NSView.
++    /// the view arrives as the raw pointer, the crate keeps the objc2 types.
++    pub fn new(ns_view: *mut core::ffi::c_void, width: u32, height: u32, scale: f64) -> Result<Self, String> {
++        let device = MTLCreateSystemDefaultDevice()
++            .ok_or("no Metal device on this Mac")?;
++        let queue = device.newCommandQueue().ok_or("no Metal command queue")?;
++
++        let source = ns(SHADER);
++        let library = device
++            .newLibraryWithSource_options_error(&source, None)
++            .map_err(|error| format!("the spike shader did not compile: {error}"))?;
++        let vertex = library
++            .newFunctionWithName(&ns("spike_vertex"))
++            .ok_or("no spike_vertex function")?;
++        let fragment = library
++            .newFunctionWithName(&ns("spike_fragment"))
++            .ok_or("no spike_fragment function")?;
++        let descriptor = MTLRenderPipelineDescriptor::new();
++        descriptor.setVertexFunction(Some(&vertex));
++        descriptor.setFragmentFunction(Some(&fragment));
++        let attachments = unsafe { descriptor.colorAttachments() };
++        let attachment: Retained<objc2_metal::MTLRenderPipelineColorAttachmentDescriptor> =
++            unsafe { attachments.objectAtIndexedSubscript(0) };
++        attachment.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
++        let pipeline = device
++            .newRenderPipelineStateWithDescriptor_error(&descriptor)
++            .map_err(|error| format!("no pipeline state: {error}"))?;
++
++        // the layer, handed to the window's view
++        let layer = CAMetalLayer::new();
++        layer.setDevice(Some(&*device));
++        layer.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
++        layer.setMaximumDrawableCount(3);
++        let size = ((width * scale as u32) as f64, (height * scale as u32) as f64);
++        layer.setDrawableSize(CGSize::new(size.0, size.1));
++        unsafe {
++            let view: &AnyObject = &*(ns_view as *const AnyObject);
++            let _: () = objc2::msg_send![view, setLayer: &*layer];
++            let _: () = objc2::msg_send![view, setWantsLayer: true];
++        }
++        Ok(MetalPresenter {
++            device,
++            queue,
++            pipeline,
++            layer,
++            scale,
++            frames: 0,
++            started: std::time::Instant::now(),
++        })
++    }
++
++    pub fn name(&self) -> &'static str {
++        "Metal"
++    }
++
++    pub fn resize(&self, width: u32, height: u32) {
++        let size = ((width.max(1) * self.scale as u32) as f64,
++                    (height.max(1) * self.scale as u32) as f64);
++        self.layer.setDrawableSize(CGSize::new(size.0, size.1));
++    }
++
++    /// the spike's frame: a giant triangle in a fixed hue, presented.
++    pub fn present_spike_frame(&mut self, red_shift: f64) {
++        let Some(drawable) = self.layer.nextDrawable() else { return };
++        let pass = MTLRenderPassDescriptor::new();
++        let attachments = pass.colorAttachments();
++        let attachment: Retained<objc2_metal::MTLRenderPassColorAttachmentDescriptor> =
++            unsafe { attachments.objectAtIndexedSubscript(0) };
++        use objc2_quartz_core::CAMetalDrawable;
++        attachment.setTexture(Some(drawable.texture().as_ref()));
++        attachment.setLoadAction(MTLLoadAction::Clear);
++        attachment.setStoreAction(MTLStoreAction::Store);
++        let green = ((self.frames % 90) as f64 / 90.0).max(0.15);
++        attachment.setClearColor(MTLClearColor { red: 0.05 + red_shift, green, blue: 0.25, alpha: 1.0 });
++        if let Some(buffer) = self.queue.commandBuffer() {
++            unsafe {
++                if let Some(encoder) = buffer.renderCommandEncoderWithDescriptor(&pass) {
++                    encoder.setRenderPipelineState(&self.pipeline);
++                    unsafe {
++                        encoder.drawPrimitives_vertexStart_vertexCount(
++                            objc2_metal::MTLPrimitiveType::Triangle,
++                            0,
++                            3,
++                        );
++                    }
++                    encoder.endEncoding();
++                }
++                buffer.commit();
++            }
++        }
++        self.frames += 1;
++    }
++
++    pub fn frames(&self) -> u64 {
++        self.frames
++    }
++
++    /// the M0 report, in the format tests and docs already know.
++    pub fn report(&self) -> String {
++        let seconds = self.started.elapsed().as_secs_f64();
++        let fps = if self.frames > 1 { (self.frames - 1) as f64 / seconds } else { 0.0 };
++        format!("metal spike complete: {} frames in {:.3}s ({:.1} fps)", self.frames, seconds, fps)
++    }
++}
+diff --git a/crates/zakuro-gpu/src/backend/mod.rs b/crates/zakuro-gpu/src/backend/mod.rs
+index 8c61889..ca56a16 100644
+--- a/crates/zakuro-gpu/src/backend/mod.rs
++++ b/crates/zakuro-gpu/src/backend/mod.rs
+@@ -2,6 +2,8 @@
+ 
+ #[cfg(feature = "opengl")]
+ pub mod gl;
++#[cfg(all(feature = "metal", target_os = "macos"))]
++pub mod metal;
+ #[cfg(feature = "vulkan")]
+ pub mod vulkan;
+ #[cfg(feature = "vulkan")]
+diff --git a/crates/zakuro-gpu/src/renderer.rs b/crates/zakuro-gpu/src/renderer.rs
+index cbe5095..4743884 100644
+--- a/crates/zakuro-gpu/src/renderer.rs
++++ b/crates/zakuro-gpu/src/renderer.rs
+@@ -15,6 +15,7 @@ pub enum RendererKind {
+     Software,
+     OpenGl,
+     Vulkan,
++    Metal,
+ }
+ 
+ impl RendererKind {
+@@ -23,6 +24,7 @@ impl RendererKind {
+             "software" | "none" | "null" => Some(RendererKind::Software),
+             "opengl" | "gl" => Some(RendererKind::OpenGl),
+             "vulkan" | "vk" => Some(RendererKind::Vulkan),
++            "metal" => Some(RendererKind::Metal),
+             _ => None,
+         }
+     }
+diff --git a/crates/zakuro/Cargo.toml b/crates/zakuro/Cargo.toml
+index 797b370..87a6794 100644
+--- a/crates/zakuro/Cargo.toml
++++ b/crates/zakuro/Cargo.toml
+@@ -12,6 +12,9 @@ path = "src/lib.rs"
+ name = "zakuro"
+ path = "src/main.rs"
+ 
++[features]
++metal = ["zakuro-gpu/metal"]
++
+ [dependencies]
+ zakuro-common.workspace = true
+ zakuro-core.workspace = true
+diff --git a/crates/zakuro/src/present.rs b/crates/zakuro/src/present.rs
+index f3d1488..2f186a9 100644
+--- a/crates/zakuro/src/present.rs
++++ b/crates/zakuro/src/present.rs
+@@ -24,6 +24,8 @@ pub enum Backend {
+         surface: Surface<WindowSurface>,
+     },
+     Vulkan(VulkanPresenter),
++    #[cfg(all(feature = "metal", target_os = "macos"))]
++    Metal(zakuro_gpu::backend::metal::MetalPresenter),
+     /// no window output, used when a backend could not start but the emulator
+     /// should still run.
+     None,
+@@ -38,6 +40,13 @@ impl Backend {
+         match kind {
+             RendererKind::OpenGl => create_opengl(event_loop, attributes),
+             RendererKind::Vulkan => create_vulkan(event_loop, attributes),
++            #[cfg(all(feature = "metal", target_os = "macos"))]
++            RendererKind::Metal => create_metal(event_loop, attributes),
++            #[cfg(not(all(feature = "metal", target_os = "macos")))]
++            RendererKind::Metal => {
++                let _ = attributes;
++                Err("the metal backend is not compiled in; build with --features metal".to_owned())
++            }
+             RendererKind::Software => {
+                 let window = event_loop
+                     .create_window(attributes)
+@@ -64,6 +73,8 @@ impl Backend {
+         match self {
+             Backend::OpenGl { presenter, .. } => presenter.name(),
+             Backend::Vulkan(presenter) => presenter.name(),
++            #[cfg(all(feature = "metal", target_os = "macos"))]
++            Backend::Metal(presenter) => presenter.name(),
+             Backend::None => "none",
+         }
+     }
+@@ -84,16 +95,20 @@ impl Backend {
+                 );
+             }
+             Backend::Vulkan(presenter) => presenter.resize(width, height),
++            #[cfg(all(feature = "metal", target_os = "macos"))]
++            Backend::Metal(presenter) => presenter.resize(width, height),
+             Backend::None => {}
+         }
+     }
+ 
+     /// whether showing a frame waits for the display, the OpenGL swap waits
+-    /// for the vertical blank.
++    /// for the vertical blank. Metal's drawables pace the same way.
+     pub fn waits_for_display(&self) -> bool {
+         match self {
+             Backend::OpenGl { .. } => true,
+             Backend::Vulkan(presenter) => presenter.waits_for_display(),
++            #[cfg(all(feature = "metal", target_os = "macos"))]
++            Backend::Metal(_) => true,
+             Backend::None => false,
+         }
+     }
+@@ -103,6 +118,8 @@ impl Backend {
+     pub fn shared_device(&self) -> Option<std::sync::Arc<SharedDevice>> {
+         match self {
+             Backend::Vulkan(presenter) => presenter.shared_device(),
++            #[cfg(all(feature = "metal", target_os = "macos"))]
++            Backend::Metal(_) => None,
+             _ => None,
+         }
+     }
+@@ -111,6 +128,8 @@ impl Backend {
+         match self {
+             Backend::OpenGl { presenter, .. } => presenter.set_scaling(filter, integer),
+             Backend::Vulkan(presenter) => presenter.set_scaling(filter, integer),
++            #[cfg(all(feature = "metal", target_os = "macos"))]
++            Backend::Metal(_) => {}
+             Backend::None => {}
+         }
+     }
+@@ -119,22 +138,28 @@ impl Backend {
+         match self {
+             Backend::OpenGl { presenter, .. } => presenter.set_stereo(stereo),
+             Backend::Vulkan(presenter) => presenter.set_stereo(stereo),
++            #[cfg(all(feature = "metal", target_os = "macos"))]
++            Backend::Metal(_) => {}
+             Backend::None => {}
+         }
+     }
+ 
+     pub fn set_layout(&mut self, arrangement: ScreenLayout) {
+-        match self {
++            match self {
+             Backend::OpenGl { presenter, .. } => presenter.set_layout(arrangement),
+             Backend::Vulkan(presenter) => presenter.set_layout(arrangement),
++            #[cfg(all(feature = "metal", target_os = "macos"))]
++            Backend::Metal(_) => {}
+             Backend::None => {}
+         }
+     }
+ 
+     pub fn set_top_width(&mut self, width: f32) {
+-        match self {
++            match self {
+             Backend::OpenGl { presenter, .. } => presenter.set_top_width(width),
+             Backend::Vulkan(presenter) => presenter.set_top_width(width),
++            #[cfg(all(feature = "metal", target_os = "macos"))]
++            Backend::Metal(_) => {}
+             Backend::None => {}
+         }
+     }
+@@ -159,6 +184,14 @@ impl Backend {
+                     .map_err(|e| PresentError::Backend(e.to_string()))
+             }
+             Backend::Vulkan(presenter) => presenter.present(top, bottom, right, overlay),
++            #[cfg(all(feature = "metal", target_os = "macos"))]
++            Backend::Metal(presenter) => {
++                // the M0 spike: one full-drawable triangle, hue walking with
++                // the frames; the screen content itself stays on the Vulkan
++                // and software paths until the raster lands (M1)
++                presenter.present_spike_frame(0.0);
++                Ok(())
++            }
+             Backend::None => Ok(()),
+         }
+     }
+@@ -250,3 +283,31 @@ fn create_vulkan(
+         .map_err(|e| e.to_string())?;
+     Ok((window, Backend::Vulkan(presenter)))
+ }
++
++#[cfg(all(feature = "metal", target_os = "macos"))]
++fn create_metal(
++    event_loop: &ActiveEventLoop,
++    attributes: WindowAttributes,
++) -> Result<(Window, Backend), String> {
++    use raw_window_handle::HasWindowHandle as _;
++    let window = event_loop
++        .create_window(attributes)
++        .map_err(|e| e.to_string())?;
++    let size = window.inner_size();
++    let scale = window.scale_factor();
++    // the spike presenter hangs a CAMetalLayer on the window's NSView
++    let raw = window.window_handle().map_err(|e| e.to_string())?.as_raw();
++    let ns_view = match raw {
++        raw_window_handle::RawWindowHandle::AppKit(handle) => {
++            handle.ns_view.as_ptr() as *mut core::ffi::c_void
++        }
++        _ => return Err("the window is not an AppKit window".to_owned()),
++    };
++    let presenter = zakuro_gpu::backend::metal::MetalPresenter::new(
++        ns_view,
++        size.width.max(1),
++        size.height.max(1),
++        scale,
++    )?;
++    Ok((window, Backend::Metal(presenter)))
++}
+-- 
+2.56.0
+
