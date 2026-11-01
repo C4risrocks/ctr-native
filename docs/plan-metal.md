@@ -24,7 +24,7 @@ PICA-VS trasladado a MSL con shading por GPU frente al CPU-shading
 |---|---|---|
 | **M0 ✅** | feature `metal` (objc2-bindings), `MetalPresenter` con CAMetalLayer sobre el NSView del window de winit, `--renderer metal` en CLI/settings/menús, spike timed | el present a 60 fps on-screen ✓ (hecho) |
 | **M0.5 ✅ GO** | naga `msl-out` + `compile_msl` y test con 189 programas aleatorios: **189/189 MSL escritos, 189/189 compilados por el device en 606 ms (3.2 ms/programa, cero rechazos)** | **GO al backend completo (M1-M3)** |
-| **M1.0 ✅ present parity (2026-11-01)** | las pantallas del juego como texturas Metal (`replaceRegion`), quads por el layout compartido `place()` (12 quads/frame), overlays egui **pendientes (M2.1)**; **fix del crash del driver AGX en macOS 26.5** (`writeRegion` en Privateoptmizada crasheaba en `convertTiles2D`): `setAllowGPUOptimizedContents(false)` + StorageMode **Managed** | test-pattern metal: **120 frames on-screen a 60.2 fps**; `native_smoke` metal: single + shared-companion a 60.2 fps |
+| **M1.0 ✅ present parity (2026-11-01, verificada con ojos)** | las pantallas del juego como texturas Metal (`replaceRegion`), un draw por pantalla: rect NDC de 16 bytes inline (`setVertexBytes`) y esquinas sintetizadas por `vertex_id` — el fetch de 72-floats por puntero, correcto en papel, **nunca rasterizaba**; overlays egui **pendientes (M2.1)**; fix driver AGX 26.5: `AllowGPUOptimizedContents(false)` + **Managed** | test-pattern metal **VISTO en pantalla**: rojo 400×240 arriba, azul 320×240 abajo, letterbox navy ✓ · 120 frames a 60.2 fps · `native_smoke` 7/7 · el bug del blanco documentado en patch 0018 |
 | **M2 ✅** | companion Metal (por renderer-kind del main), settings persistentes (`renderer: "metal"` toml + combo menús), `native_smoke` +2 casos metal | **7/7 escenarios nativos verdes** (5 vulkan + 2 metal, single y shared) |
 | **M1.1 ⏳ backlog (raster)** | `HardwareMetal` PICA-pipeline a Metal (formatos→MTLPixelFormat, depth 32f, blending, shaders GPU-metal) — multi-sesión, el resto del fork depende de Vulkan | headless ×600: MIPS ≥ 85% del mejor camino |
 | **M3 ⏳ cierre** | kpi real del jugador con Metal; tabla Vulkan-vs-Metal; decision de shading default | docs y el kpi del jugador |
@@ -47,6 +47,33 @@ PICA-VS trasladado a MSL con shading por GPU frente al CPU-shading
 - `docs/metal-direct.md` — el informe go/no-go anterior (HOLD) que este plan
   reabre con el disparador cumplido (MM3D 59.6 fps).
 - `docs/patches/zakuro/` — la serie de parches del fork (0001…0017).
+
+## Riesgos consumados del M1.0
+
+### El bug del blanco, de caza (2026-11-01)
+
+La primera sesión del jugador con `--renderer metal` mostró una ventana
+**en blanco** con el juego corriendo a ciegas (audio y navegación OK).
+Cinco fugas reales detrás, encontradas con readback de píxeles del
+drawable (blit 2×2 → `getBytes`) y con validación de Metal:
+
+1. **`presentDrawable` ausente** — el frame se codificaba y se hacía
+   commit, pero CoreAnimation nunca compone: ventana blanca eterna.
+2. **el fetch de vértices de 72-floats** — bytes correctos verificados
+   por log, binding correcto, validación silenciosa… y cero fragmentos.
+   Con esquinas compiladas por `vertex_id` y el rect por draw, sí dibuja.
+   El fetch-por-puntero queda en la lista de "noconfiables" para Metal.
+3. **uv invertido** — la fila 0 del upload es la parte alta de la
+   pantalla; `v` debe crecer hacia abajo.
+4. **tomos de textura** — solo se vinculaba una textura para todos los
+   quads; ahora un draw por pantalla vincula la suya.
+5. **`top_width` en `1.0`** — `present.rs` no reenviaba
+   `set_top_width/set_layout/set_stereo/set_scaling` a Metal: el layout
+   corría con top_width 1.0 y el top screen quedó de **3 px de ancho**.
+
+`framebufferOnly` queda en false (el sample y el readback lo exigen;
+coste de composición asumido hasta M2.1). El resto del presente usa
+solo caminos que Metal demostró dibujar en esta máquina.
 
 ## Riesgos consumados del M1.0
 

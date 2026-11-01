@@ -76,3 +76,9 @@ Hallazgos medidos (cierran el misterio del "vertices shaded on the CPU"):
 6. PR de cortesía upstream: LICENSE file en `3dsrecomp` (declara MIT en
    Cargo.toml pero no lleva el archivo), y los parches de
    `docs/patches/zakuro/` como serie PR.
+
+## Fila M3 pendiente — Metal present (M1.0), kpi del jugador
+
+| Sesión | Compuesto | kpi |
+|---|---|---|
+| MM3D `--renderer metal --rasterizer software` — **pendiente de cerrar en limpio** | raster CPU + texturas Metal + `presentDrawable` | se llena con la `session kpi` después de la partida del 2026-11-01 |
