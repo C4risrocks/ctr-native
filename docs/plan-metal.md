@@ -74,7 +74,11 @@ encolarse. Config de layout por `Arc<Mutex>` snapshot, tamaño de ventana
 sellado en cada job, y el drop del presentador cierra el canal.
 
 Verificado: el patrón compone idéntico al mono-hilo (captura), y
-`native_smoke` queda 7/7. A medir con el kpi del jugador.
+`native_smoke` queda 7/7. **Y medido en la partida real: 30084 frames/
+633 s = avg 47.5 fps (×1.84 vs el 25.8 de M1.0), 10.5 min sin freeze**;
+los 131 dry/min son la cadencia sub-60. Con esto, la cuenta del M3
+queda: Vulkan 58.1 · metal+software 47.5 · HardwareMetal (M1.1)
+el camino de los 60.
 
 **Y la confirmación del flame-graph (la sesión del 2026-11-01, con el
 present desacoplado corriendo): el 66% del hilo del juego ya no espera
