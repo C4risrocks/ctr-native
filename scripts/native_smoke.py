@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import subprocess
 import sys
@@ -12,6 +11,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from dm.tools.runtime import environment  # noqa: E402
 COMPLETE = re.compile(r'presentation test complete: (\d+) frames in ([\d.]+)s \(([\d.]+) fps\)')
 CASES = (
     ('single-vulkan', ['--split', 'off'], {}, False, True),
@@ -35,8 +37,7 @@ def main(argv: list[str] | None = None) -> int:
         for name, flags, switches, shared, gpu in CASES:
             with TemporaryDirectory(prefix='ctr-native-window-test-') as directory:
                 root = Path(directory)
-                env = dict(os.environ)
-                env.update(HOME=str(root / 'home'), DYLD_FALLBACK_LIBRARY_PATH='/opt/homebrew/lib', RUST_LOG='info')
+                env = environment(root / 'home', extra={'RUST_LOG': 'info'})
                 for key in ('ZAKURO_TEST_COMPANION_GL', 'ZAKURO_TEST_WINDOW_CYCLE', 'ZAKURO_COPY_SCREENS'):
                     env.pop(key, None)
                 env.update(switches)

@@ -47,7 +47,7 @@ class StageHelper:
     """Concrete runner: subprocess with capture, errors left to the caller."""
     def __call__(self, command: list, *, env: dict | None = None, timeout: int | None = None,
                  capture: str = "text") -> subprocess.CompletedProcess:
-        kwargs: dict = {"capture_output": True, "timeout": timeout}
+        kwargs: dict = {"capture_output": True, "timeout": timeout, "text": True}
         if env is not None:
             kwargs["env"] = env
         return subprocess.run(command, **kwargs)

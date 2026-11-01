@@ -22,22 +22,30 @@ before building apps that depend on the new `--language` interface.
 
 ## Stages
 
-Every run reports the same seven stages, numbered 1 through 7:
+Every run reports the same eight stages, numbered 1 through 8 (`dm/build`):
 
 1. **discover** — bounded classification of `.3ds`, `.3dz` and `.cci` inputs.
    CIA is recognized but cannot be packaged.
 2. **identify** — validate the NCSD/NCCH headers and resolve the title profile.
 3. **verify the dump** — stream the original dump's profile MD5, unless skipped
    explicitly. The original path remains the identity of the build.
-4. **decrypt a working copy** — skip for NoCrypto; otherwise validate every
+4. **prepare a working copy** — skip for NoCrypto; otherwise validate every
    partition and publish a verified temporary copy atomically. Metadata and
    icon reads subsequently use this copy and its newly parsed partition.
-5. **make the icon** — decode SMDH, or skip with `--no-icon`. Truncated SMDH is
-   an error; a complete SMDH without titles uses `Game` as the app name.
-6. **pack the app** — assemble a fresh candidate beside the destination, sign
-   each executable and the bundle, verify signatures, then publish atomically.
-7. **verify the app** — with `--launch`, run the bundled host headlessly before
-   opening the app. Nonzero exit, timeout or an unsuccessful smoke stops opening.
+5. **obtain the AOT library** — the fingerprint (prepared ROM, both tool
+   stamps, architecture, cache format) decides between the cache
+   (`<id>_build/aot/<fingerprint>/`), the shared installed library, or an
+   isolated-HOME compile with `3dsrecomp`; the result is published
+   atomically. `--recompiler-bin`/`--rebuild-aot` steer it.
+6. **metadata and icon** — decode SMDH, or skip with `--no-icon`. Truncated
+   SMDH is an error; a complete SMDH without titles uses `Game` as the app
+   name.
+7. **pack, sign and publish** — assemble a fresh candidate beside the
+   destination, sign each executable and the bundle, verify signatures, then
+   publish atomically.
+8. **verify the app** — with `--launch`, run the bundled host headlessly
+   (`dm/tools/runtime.py` builds the command and environment) before opening
+   the app. Nonzero exit, timeout or an unsuccessful smoke stops opening.
 
 ```mermaid
 flowchart LR
@@ -91,7 +99,7 @@ host/AOT copies and the external ROM. Settings remain owned by the runtime.
 
 `--progress json` writes one JSON event per stdout line: `stage`, `step`,
 `progress`, `stage_end`, `say`. Events carry `k`/`n`; successful runs finish at
-7/7 and failures close their current stage with `ok:false`. `auto` chooses bars
+8/8 and failures close their current stage with `ok:false`. `auto` chooses bars
 on a TTY and lines behind a pipe. `off` keeps stage summaries only.
 
 Build metadata is recorded in `<id>_build/logs/pack.tsv`; the builder does not
