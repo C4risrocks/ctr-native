@@ -1,0 +1,91 @@
+From 1a49bf060672390a83bce4d8f078df35d9708590 Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Sat, 31 Oct 2026 19:46:28 -0600
+Subject: [PATCH] menus: the game's paused menu asks for the second window too
+
+Screens joins the paused menu with the same second-window and monitor
+combos the settings' panel holds, and the say applies live through
+Action::Settings; the desktop's monitors re-list while the menu is
+open, so unplugged displays leave the list.
+---
+ crates/zakuro/src/lib.rs   |  9 +++++----
+ crates/zakuro/src/menus.rs | 29 +++++++++++++++++++++++++++++
+ 2 files changed, 34 insertions(+), 4 deletions(-)
+
+diff --git a/crates/zakuro/src/lib.rs b/crates/zakuro/src/lib.rs
+index 99493fd..3b30693 100644
+--- a/crates/zakuro/src/lib.rs
++++ b/crates/zakuro/src/lib.rs
+@@ -667,9 +667,10 @@ impl ApplicationHandler for App {
+         if let Some(window) = &self.companion {
+             window.request_redraw();
+         }
+-        // the desktop's monitors, listed while the settings are open for
+-        // the second window's unsigned choice
+-        if self.menus.settings_open && self.menus.monitors.is_empty() {
++        // the desktop's monitors, listed while the settings or the game's
++        // menu stay open for the second window's choices (they re-sync the
++        // list as displays come and go)
++        if self.menus.settings_open || self.menus.menu_open {
+             self.menus.monitors = event_loop
+                 .available_monitors()
+                 .enumerate()
+@@ -1846,7 +1847,7 @@ impl App {
+         let overlay = gui.frame(window, |ui| {
+             match &game {
+                 Some((name, fps, recompiled)) => {
+-                    actions.extend(menus.game(ui, name, show_fps.then_some(*fps), *recompiled, fast, jobs, saved.as_deref()));
++                    actions.extend(menus.game(ui, name, show_fps.then_some(*fps), *recompiled, fast, jobs, saved.as_deref(), settings));
+                     if let Some(text) = &corner {
+                         menus::corner(ui.ctx(), text);
+                     }
+diff --git a/crates/zakuro/src/menus.rs b/crates/zakuro/src/menus.rs
+index e44a861..f15858f 100644
+--- a/crates/zakuro/src/menus.rs
++++ b/crates/zakuro/src/menus.rs
+@@ -369,6 +369,7 @@ impl Menus {
+         fast: bool,
+         jobs: &[Job],
+         saved: Option<&str>,
++        settings: &mut crate::settings::Settings,
+     ) -> Vec<Action> {
+         let mut actions = Vec::new();
+         let ctx = ui.ctx().clone();
+@@ -444,6 +445,34 @@ impl Menus {
+                     }
+                 });
+                 ui.add_space(4.0);
++                // the second window, asked right from the game menu: the
++                // same say the settings' panel holds, applied live
++                let screens_before = (settings.companion_window, settings.companion_monitor);
++                ui.label(RichText::new("Screens").strong());
++                egui::ComboBox::from_label("Second window")
++                    .selected_text(settings.companion_window.name())
++                    .show_ui(ui, |ui| {
++                        for window in CompanionWindow::ALL {
++                            ui.selectable_value(&mut settings.companion_window, window, window.name());
++                        }
++                    });
++                if settings.companion_window != CompanionWindow::Off {
++                    egui::ComboBox::from_label("Second window's monitor")
++                        .selected_text(match settings.companion_monitor {
++                            Some(index) => self.monitors.iter().find(|(one, _)| *one == index).map_or(format!("Monitor {index}"), |(_, name)| name.clone()),
++                            None => "After the main window's".into(),
++                        })
++                        .show_ui(ui, |ui| {
++                            ui.selectable_value(&mut settings.companion_monitor, None, "After the main window's");
++                            for (index, name) in &self.monitors {
++                                ui.selectable_value(&mut settings.companion_monitor, Some(*index), name);
++                            }
++                        });
++                }
++                if (settings.companion_window, settings.companion_monitor) != screens_before {
++                    actions.push(Action::Settings);
++                }
++                ui.add_space(4.0);
+                 if wide(ui, "Settings") {
+                     self.settings_open = true;
+                 }
+-- 
+2.56.0
+
