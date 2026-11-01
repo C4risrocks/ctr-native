@@ -65,7 +65,7 @@ La ejecución seguirá el mismo modelo que A Link Between Worlds: Zakuro y la bi
 
 ## Empaquetado
 
-Usar el builder existente, sin añadir opciones públicas ni integrar una nueva etapa AOT:
+Usar el builder existente, con compilación AOT automática en la etapa 5:
 
 ```sh
 python3 scripts/build_app_from_3ds.py "$ROM_DESCIFRADA" \
@@ -92,3 +92,10 @@ La app dependerá de la ROM externa en su ubicación definitiva. Guardados y con
 - Repetir el builder y confirmar reutilización del paquete y conservación del guardado.
 
 Documentar resultados, rendimiento observado y fallos reproducibles en las notas del título. Mantener la velocidad original, sin activar parches de 60 FPS. No declarar el juego validado mientras falte la prueba interactiva de audio y guardado.
+
+## Actualización 2026-11-01
+
+Los comandos manuales AOT y rutas de instalación anteriores documentan el
+bring-up histórico. El builder actual obtiene AOT automáticamente y empaqueta
+la biblioteca de caché validada. Los cuatro P1 están cerrados; los cinco P2
+figuran en [el plan del pipeline](PLAN_REFACTOR_PIPELINE.md). EUR sigue pendiente.

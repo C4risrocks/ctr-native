@@ -43,3 +43,11 @@ its tail. It refuses links, binary content and recognizable key tables.
 `clean_cache.py <game.app> --dry-run` previews exactly the cache/old-log
 candidates. A running app is skipped; failure to inspect processes stops
 cleanup. Saves, settings and the current log are never candidates.
+
+## Comportamiento actual del builder
+
+AOT se genera automáticamente; las herramientas nativas se preparan una vez.
+Conserva la ROM externa, incluida su copia preparada, en la ruta del launcher.
+`--no-keep-directories` elimina solo `extract` del build seleccionado: conserva
+ROM preparada, caché AOT, logs y datos del jugador. Consulta
+[development.md](development.md) para las ocho etapas y sus limitaciones.

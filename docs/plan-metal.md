@@ -1,5 +1,9 @@
 # Plan Metal (G4→M): backend Metal directo para ctr-native
 
+> Auditoría vigente: la presentación Metal sigue siendo experimental. La
+> reutilización de texturas y la entrega bloqueante son P2 abiertos; los KPI
+> de sesiones no los cierran. Consulta [el backlog](../PLAN_REFACTOR_PIPELINE.md).
+
 ## Estado (2026-11-01) — M0 ✅ **ejecutado y merged a master**
 
 | Dato | Valor |

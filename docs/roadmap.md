@@ -1,5 +1,25 @@
 # Roadmap F7–F8 (pendientes y decisiones)
 
+## Estado actual — 2026-11-01
+
+- Pipeline común de ocho etapas; AOT automática desde caché validada.
+- P1-1/P1-2 corregidos en `ca51d6a`; P1-3/P1-4 en `725bb82`.
+- Los cinco P2 conservan su detalle y estado en el [plan del refactor](../PLAN_REFACTOR_PIPELINE.md).
+- Majora USA validada; objetivo EUR pendiente en su [plan](../PLAN_MAJORAS_MASK_3D.md).
+- Metal: presentación experimental con raster software; HardwareMetal y overlays
+  pendientes. Consultar [plan Metal](plan-metal.md).
+- Validación física con dos monitores y comparación controlada de rendimiento
+  siguen separadas de los smokes sintéticos. Las mediciones de sesiones están
+  fechadas en [zakuro-macos](zakuro-macos.md).
+
+## Registro histórico F7–F8
+
+
+> Registro histórico: las mediciones y cierres se refieren a sus revisiones
+> originales. El estado vigente está en [el backlog](../PLAN_REFACTOR_PIPELINE.md)
+> y [development.md](development.md). La presentación Metal ya existe; el raster
+> HardwareMetal y las correcciones P2 documentadas siguen pendientes.
+
 Este archivo persiste el plan en el repo para retomar sesiones futuras sin
 perder hilo. El estado de partida es la rama `master` con el port zakuro F0–F6
 completado (ver `docs/zakuro-macos.md` para KPI base) y la intención de cerrar

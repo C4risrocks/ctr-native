@@ -2,15 +2,16 @@
 
 ## Estado — implementación inicial realizada; auditoría con hallazgos abiertos
 
-Branch `refactor/pipeline` (commits `7cb83b0` motor+AOT, `9a029b7`
-validación-como-datos + runtime centralizado), merged a master por
-fast-forward. Gates por entrega: 68 tests OK, ruff limpio, pyright 0
-errores, 5 escenarios gráficos sintéticos verdes, y el flujo real
-re-empacado en verde (ALBW reuso de llave + firma). Losdos pendientes
-que el plan dejaba explícitos: la integración macOS re-utilizable con
-`3dsrecomp real + ROM manufacturada` vive en `dm/tests/t_build.py`
-(skip cuando el compilador no está construido), y CI sigue sin
-necesitar datos de juego ni claves.
+La implementación inicial se integró desde `refactor/pipeline` (`7cb83b0`,
+`9a029b7`). La auditoría posterior identificó nueve hallazgos: cuatro P1
+corregidos en `ca51d6a` y `725bb82`, y cinco P2 abiertos, incluido uno parcial.
+La tabla de auditoría al final es la referencia de sus estados.
+
+Validación del cierre P1: 75 pruebas Python, una omitida por P2-9, Ruff,
+Pyright y bootstrap local y desde clones nuevos correctos. Los resultados
+históricos no implican cierre de los pendientes ni validación de otra edición.
+Las secciones de diseño siguientes conservan el objetivo; los detalles aún no
+implementados, como la huella completa del compilador/SDK, siguen pendientes.
 
 ## 1. Objetivo y alcance
 

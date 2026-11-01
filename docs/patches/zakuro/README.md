@@ -36,3 +36,7 @@ como otro parche numerado y actualiza su hash de árbol en el lock.
 
 `0018a-metal-feature-gates.patch` exports f7c8e6f before 0019; it restores
 feature guards for non-Metal builds and the exact base required by 0019.
+
+Estado 2026-11-01: serie 0001–0019 con 0018a intercalado, reproducida desde
+upstream y comprobada contra vendors.lock.json en el cierre P1 (725bb82).
+Los P2 de Metal siguen abiertos en el plan del pipeline.

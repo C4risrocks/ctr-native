@@ -30,7 +30,7 @@ previas no certifican la sincronización ni publicación del código actual.
 ## Planes
 
 - **[plan-metal.md](plan-metal.md)** — el plan del backend Metal (M0..M3) y
-  el estado del spike M0 (60.1 fps on-screen, empate con Vulkan).
+  el progreso de presentación Metal, raster hardware pendiente y límites actuales.
 
 ## Para el que mantiene el repo
 
@@ -38,7 +38,7 @@ previas no certifican la sincronización ni publicación del código actual.
   pruebas ejecutadas y validaciones físicas pendientes.
 
 - **[roadmap.md](roadmap.md)** — el plan heredado F7+F8 con decisiones, fases,
-  KPIs y su estado (todo ejecutado 2026-10-30).
+  KPIs y su estado histórico, separado del panorama actual.
 - **[zakuro-macos.md](zakuro-macos.md)** — el port en sí: resultados medidos
   (KPI 0–F6, 3 corridas de G5), resueltas y pendientes del delta darwin.
 - **[metal-direct.md](metal-direct.md)** — informe go/no-go (F8-G4): HOLD con
@@ -51,8 +51,17 @@ previas no certifican la sincronización ni publicación del código actual.
 
 ## Reglas de oro (recordar a los agentes)
 
-- Nada del juego ni de llaves entra al repo (`.gitignore` lo garantiza).
+- Nada del juego ni de llaves entra al repo (`.gitignore` los excluye; revisar también el diff antes de publicar).
 - La sandbox `<app>.ctr-native/` es usuario: se crea, nunca se actualiza.
 - Cambios de parsers con test sintético; lista de stages en development.md.
 - Los diagramas HTML arriba son el destino de `/archify` (candidates en
   `.archify/`, fuera de git).
+
+## Estado y planes vigentes
+
+- [Pipeline y auditoría](../PLAN_REFACTOR_PIPELINE.md): cuatro P1 cerrados,
+  cinco P2 abiertos (uno parcialmente corregido).
+- [Majora’s Mask](../PLAN_MAJORAS_MASK_3D.md): USA validada, EUR pendiente.
+- [Desarrollo](development.md): ocho etapas, caché AOT validada y comandos actuales.
+- [Metal](plan-metal.md): presentación con raster software; sincronización,
+  entrega de frames, overlays y raster hardware aún requieren trabajo.

@@ -25,3 +25,6 @@ copia de trabajo. El launcher utiliza esa copia; no incluye claves.
 - Dependencia del launcher: la ROM que corre es la copia descifrada de
   `0004000000125500_build/decrypted/…Decrypted.decrypted.3ds` (borrar esa
   carpeta rompe la app; el dump original raíz queda intacto).
+
+El builder actual obtiene AOT automáticamente desde una caché validada por
+título; las rutas globales anteriores documentan solo el bring-up histórico.

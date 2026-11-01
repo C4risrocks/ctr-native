@@ -16,3 +16,13 @@
    is a repayable contribution for the next player of that title.
 5. PRs: one subject per PR, tests for container parsing changes, and a line
    of context in the commit ("why now").
+
+## Current checks and native changes
+
+Run `pyright dm scripts`, `python3 -m dm.tests.fuzz_containers --iterations 2000`
+and `python3 scripts/bootstrap_vendors.py --verify-only` alongside the checks
+above. The shared builder has eight stages and obtains AOT automatically.
+Export every native commit in dependency order, update the locked tree, and
+reconstruct the full patch series in a fresh directory before publishing it.
+See [development](docs/development.md) and the
+[open audit findings](PLAN_REFACTOR_PIPELINE.md#auditoría-2026-11-01-sobre-be10b73).

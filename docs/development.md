@@ -1,8 +1,7 @@
 # Build pipeline and maintenance
 
 Python 3.12+ orchestrates the native macOS bundle. Inputs are the player's
-card image, optional key sources, the pinned zakuro host and an installed
-3dsrecomp AOT library. ROMs, keys and generated game assets never belong in git.
+card image, optional key sources, the prepared zakuro host and 3dsrecomp executable. ROMs, keys and generated game assets never belong in git.
 
 ## Reproducible native tools
 
@@ -32,11 +31,11 @@ Every run reports the same eight stages, numbered 1 through 8 (`dm/build`):
 4. **prepare a working copy** — skip for NoCrypto; otherwise validate every
    partition and publish a verified temporary copy atomically. Metadata and
    icon reads subsequently use this copy and its newly parsed partition.
-5. **obtain the AOT library** — the fingerprint (prepared ROM, both tool
-   stamps, architecture, cache format) decides between the cache
-   (`<id>_build/aot/<fingerprint>/`), the shared installed library, or an
-   isolated-HOME compile with `3dsrecomp`; the result is published
-   atomically. `--recompiler-bin`/`--rebuild-aot` steer it.
+5. **obtain the AOT library** — compile with isolated HOME or reuse the
+   per-title cache after verifying its manifest and library SHA-256. The
+   library is packaged directly from that cache; global installations are
+   ignored. `--recompiler-bin` and `--rebuild-aot` select the tool or force a
+   rebuild. Toolchain fingerprint completeness remains P2-5.
 6. **metadata and icon** — decode SMDH, or skip with `--no-icon`. Truncated
    SMDH is an error; a complete SMDH without titles uses `Game` as the app
    name.
@@ -51,7 +50,8 @@ Every run reports the same eight stages, numbered 1 through 8 (`dm/build`):
 flowchart LR
   A[Discover] --> B[Identify] --> C[Verify original]
   C --> D[Decrypt or skip]
-  D --> E[Read clear metadata and icon]
+  D --> J[Compile or verify cached AOT]
+  J --> E[Read clear metadata and icon]
   E --> F[Build candidate]
   F --> G[Sign and verify]
   G --> H[Atomic publication]
@@ -158,3 +158,11 @@ reuse, and serializes builds of the same fingerprint with a file lock. Global
 installed libraries and hints are neither imported nor overwritten. A missing
 recompiler fails explicitly; unrecorded installed libraries are not a fallback.
 The current fingerprint's compiler/SDK coverage remains an open P2 audit item.
+
+## Current audit status (2026-11-01)
+
+The four P1 fixes are recorded in `ca51d6a` and `725bb82`. The authoritative
+[audit backlog](../PLAN_REFACTOR_PIPELINE.md#auditoría-2026-11-01-sobre-be10b73)
+retains five P2 items; in particular controlled failures are not yet guaranteed
+for every parser/process error. Cache-hit stage completion has been fixed.
+Native patches include 0018a before 0019; the lock covers their resulting tree.

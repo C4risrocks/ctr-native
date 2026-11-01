@@ -22,10 +22,11 @@ from *your* dump and holds nothing from any game in this repository.
 1. **Requirements**: a Mac with Apple silicon, macOS 13.4+, Python 3.12+,
    Xcode Command Line Tools and Rust. Reconstruct the pinned native sources
    with `python3 scripts/bootstrap_vendors.py`, then build both forks using
-   the commands in [development.md](docs/development.md). Run one
-   `vendors/3dsrecomp/target/release/3dsrecomp build <rom>` per game to install
-   its AOT library. Vulkan presentation uses the system Vulkan loader and
-   MoltenVK; OpenGL remains a fallback.
+   the commands in [development.md](docs/development.md). The common eight-stage
+   builder compiles each game's AOT library automatically and verifies cached
+   artifacts before reuse. Vulkan/MoltenVK is the main hardware path; Metal
+   presentation is experimental and currently uses the software raster.
+
 2. **Put your dump in a folder** (next to nothing else needed):
 
        ~/Games/ALBW/Legend of Zelda, The - A Link Between Worlds (USA) (En,Fr,Es).3ds
@@ -78,5 +79,14 @@ and checks with `ruff check dm scripts`.
 
 ## License
 
-MIT ([LICENSE](LICENSE)). Third-party components (none is bundled) keep their
+MIT ([LICENSE](LICENSE)). Generated apps include the Zakuro runtime and its dependencies; components keep their
 own licenses; the knowledge base is 3dbrew/GBATEK-format documentation.
+
+## Current maintenance status
+
+The four high-priority findings are fixed through `725bb82`. Five P2 findings
+remain open: AOT toolchain fingerprinting, error normalization, Metal texture
+synchronization, blocking Metal frame delivery, and real recompiler integration.
+See [the audit backlog](PLAN_REFACTOR_PIPELINE.md#auditoría-2026-11-01-sobre-be10b73)
+and [the current roadmap](docs/roadmap.md). A successful synthetic smoke does
+not certify game compatibility or close these findings.

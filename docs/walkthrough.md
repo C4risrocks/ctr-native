@@ -136,7 +136,7 @@ sobre la preferencia guardada.
 
 La implementación y las pruebas sintéticas no sustituyen una sesión física:
 quedan por registrar resultados en dos monitores reales y métricas de audio
-windowed. Metal directo continúa fuera del alcance.
+windowed. La presentación Metal es experimental y usa raster software; HardwareMetal sigue pendiente.
 
 ## 7. Glosario
 
@@ -155,3 +155,11 @@ windowed. Metal directo continúa fuera del alcance.
   settings, saves, caches, logs. Se crea y jamás se actualiza en un re-pack.
 - **`.key`**: `ctr-native.key` — fingerprint de las entradas del build;
   coincide = nada se reescribe; cambia = re-pack con firma nueva.
+
+## Comportamiento actual del builder
+
+AOT se genera automáticamente; las herramientas nativas se preparan una vez.
+Conserva la ROM externa, incluida su copia preparada, en la ruta del launcher.
+`--no-keep-directories` elimina solo `extract` del build seleccionado: conserva
+ROM preparada, caché AOT, logs y datos del jugador. Consulta
+[development.md](development.md) para las ocho etapas y sus limitaciones.

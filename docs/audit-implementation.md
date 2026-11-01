@@ -1,5 +1,10 @@
 # Audit implementation — 0.2.0
 
+> Historical record: measurements and completion claims below refer to their
+> original revisions. For current status see [the audit backlog](../PLAN_REFACTOR_PIPELINE.md)
+> and [development](development.md). Metal presentation now exists, while the
+> HardwareMetal raster and the documented P2 fixes remain pending.
+
 Implemented against ctr-native baseline `8d3e87e`. Native delta: zakuro
 `8f21f68`, exported as patch 0012; upstream bases and expected patched trees
 are fixed in `vendors.lock.json`.

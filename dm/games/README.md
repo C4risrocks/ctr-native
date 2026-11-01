@@ -18,3 +18,6 @@ builds with a "provisional profile" line in the report
 2. Verified dumps: put the No-Intro MD5 in `verified_md5=` — the build then
    verifies your copy each time (cheap 1 GB read, ~2 s on SSD).
 3. Note anything surprising in `README.md` here.
+
+Current builder: AOT is obtained automatically from a verified per-title cache;
+manual global installation paths above describe historical bring-up only.
