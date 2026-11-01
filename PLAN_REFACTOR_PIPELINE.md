@@ -112,10 +112,10 @@ El refactor estará aceptado cuando un título nuevo pueda recorrer el flujo com
 |---|---|---|
 | 1. Limpieza de builds ajenos | P1 | Corregido: solo extract del build seleccionado |
 | 2. Metadatos antiguos tras descifrar | P1 | Corregido: nuevo PreparedGame con partición analizada |
-| 3. Selección AOT sin validar contenido/procedencia | P1 | Pendiente |
-| 4. Fork irreproducible: parche 0019 y lock | P1 | Pendiente |
+| 3. Selección AOT sin validar contenido/procedencia | P1 | Corregido: manifiesto y SHA-256 verificados; se empaqueta la caché, no la librería global |
+| 4. Fork irreproducible: parche 0019 y lock | P1 | Corregido: exportado f7c8e6f como 0018a; lock actualizado; bootstrap nuevo verificado |
 | 5. Huella AOT incompleta | P2 | Pendiente |
-| 6. Errores y cierre de etapas JSON | P2 | Pendiente |
+| 6. Errores y cierre de etapas JSON | P2 | Parcial: caché AOT cierra etapa; normalización de errores pendiente |
 | 7. Sincronización de texturas Metal | P2 | Pendiente |
 | 8. Canal Metal bloqueante | P2 | Pendiente |
 | 9. Integración real 3dsrecomp omitida | P2 | Pendiente |
@@ -126,4 +126,20 @@ que la copia conserve título y no retenga particiones cifradas.
 
 Validación: 72 pruebas Python (una omitida), 2.000 mutaciones sintéticas, Ruff
 y Pyright correctos. La suite incluye
-empaquetado nativo macOS. El bootstrap continúa pendiente por P1-4.
+empaquetado nativo macOS. Ese registro corresponde a P1-1/P1-2; el bootstrap se verificó al cerrar P1-4.
+
+### Cierre de P1-3 y P1-4
+
+AOT exige la herramienta preparada y verifica formato, título, arquitectura,
+huella y SHA-256 antes de reutilizar. Devuelve la biblioteca de esa caché y no
+lee ni modifica la instalación global ni incorpora sus hints. Un bloqueo por
+huella serializa compilaciones concurrentes. Los binarios instalados sin
+manifiesto dejan de ser una vía de reutilización implícita.
+
+El parche 0018a conserva el commit intermedio f7c8e6f antes de aplicar 0019.
+Se verificaron ambos forks existentes y se reconstruyeron ambos desde sus
+revisiones upstream en un directorio temporal nuevo, aplicando la serie completa.
+Los cuatro P1 están corregidos; los cinco P2 conservan su estado indicado.
+
+Validación del cierre P1: 75 pruebas Python (una omitida por la integración
+registrada en P2-9), Ruff, Pyright y bootstrap local y desde clones nuevos correctos.

@@ -149,3 +149,12 @@ Prepared ROMs, AOT caches, logs, apps and player sandboxes remain in place.
 After decryption the pipeline reparses the prepared card and uses its current
 partition flags for metadata; a changed title or remaining encryption fails
 preparation before AOT or packaging.
+
+### Verified AOT artifacts
+
+The pipeline packages the library directly from its fingerprint cache. It checks
+manifest format, title ID, architecture, fingerprint and library SHA-256 on each
+reuse, and serializes builds of the same fingerprint with a file lock. Global
+installed libraries and hints are neither imported nor overwritten. A missing
+recompiler fails explicitly; unrecorded installed libraries are not a fallback.
+The current fingerprint's compiler/SDK coverage remains an open P2 audit item.

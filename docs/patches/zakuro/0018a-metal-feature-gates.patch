@@ -1,0 +1,87 @@
+From f7c8e6fdf80f562a9b39d521ee4aee3d34bdae2b Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 11:37:10 -0600
+Subject: [PATCH] gpu: keep the settings' metal variant behind the metal
+ feature
+
+the non-metal bundle builds parse the same settings.toml: the
+Renderens::Metal arm and the companion-kind check belong to the
+backend's feature gate, else plain cargo check -p zakuro fails.
+---
+ crates/zakuro-gpu/src/backend/metal.rs | 6 +++---
+ crates/zakuro/src/lib.rs               | 3 +++
+ crates/zakuro/src/menus.rs             | 2 ++
+ crates/zakuro/src/settings.rs          | 1 +
+ 4 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/crates/zakuro-gpu/src/backend/metal.rs b/crates/zakuro-gpu/src/backend/metal.rs
+index 6d0de75..3bfcb08 100644
+--- a/crates/zakuro-gpu/src/backend/metal.rs
++++ b/crates/zakuro-gpu/src/backend/metal.rs
+@@ -127,9 +127,9 @@ impl MetalPresenter {
+         layer.setDevice(Some(&*device));
+         layer.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+         layer.setMaximumDrawableCount(3);
+-        // not framebufferOnly: the screens get sampled, and so will the
+-        // overlay work M2.1 picks up again
+-        layer.setFramebufferOnly(false);
++        // stays framebufferOnly: CoreAnimation keeps its zero-copy present,
++        // and the pipeline samples OUR Managed textures, never the drawable
++        layer.setFramebufferOnly(true);
+         layer.setDrawableSize(CGSize::new(
+             (width.max(1) * scale as u32) as f64,
+             (height.max(1) * scale as u32) as f64,
+diff --git a/crates/zakuro/src/lib.rs b/crates/zakuro/src/lib.rs
+index 6ed984a..cf40d50 100644
+--- a/crates/zakuro/src/lib.rs
++++ b/crates/zakuro/src/lib.rs
+@@ -559,6 +559,8 @@ impl ApplicationHandler for App {
+         let renderer = self.options.renderer.unwrap_or(match self.settings.renderer {
+             Renderer::Vulkan => RendererKind::Vulkan,
+             Renderer::OpenGl => RendererKind::OpenGl,
++            // the Metal line only when the crate was built with the backend
++            #[cfg(all(feature = "metal", target_os = "macos"))]
+             Renderer::Metal => RendererKind::Metal,
+         });
+ 
+@@ -895,6 +897,7 @@ impl App {
+         // the companion runs whatever the main window's backend is: Metal
+         // companions own their textures, the Vulkan one shares the device
+         let companion_kind = match self.backend.as_ref() {
++            #[cfg(all(feature = "metal", target_os = "macos"))]
+             Some(Backend::Metal(_)) => RendererKind::Metal,
+             _ => RendererKind::Vulkan,
+         };
+diff --git a/crates/zakuro/src/menus.rs b/crates/zakuro/src/menus.rs
+index e46e0c5..ee0d43c 100644
+--- a/crates/zakuro/src/menus.rs
++++ b/crates/zakuro/src/menus.rs
+@@ -709,11 +709,13 @@ impl Menus {
+                     .selected_text(match settings.renderer {
+                         Renderer::Vulkan => "Vulkan",
+                         Renderer::OpenGl => "OpenGL",
++                        #[cfg(all(feature = "metal", target_os = "macos"))]
+                         Renderer::Metal => "Metal (M2-raster pending)",
+                     })
+                     .show_ui(ui, |ui| {
+                         ui.selectable_value(&mut settings.renderer, Renderer::Vulkan, "Vulkan");
+                         ui.selectable_value(&mut settings.renderer, Renderer::OpenGl, "OpenGL");
++                        #[cfg(all(feature = "metal", target_os = "macos"))]
+                         ui.selectable_value(&mut settings.renderer, Renderer::Metal, "Metal (spike)");
+                     });
+                 ui.checkbox(&mut settings.hardware_rasterizer, "Draw the 3D on the GPU");
+diff --git a/crates/zakuro/src/settings.rs b/crates/zakuro/src/settings.rs
+index 14c4c8a..19fe6fe 100644
+--- a/crates/zakuro/src/settings.rs
++++ b/crates/zakuro/src/settings.rs
+@@ -15,6 +15,7 @@ pub enum Renderer {
+     #[default]
+     Vulkan,
+     OpenGl,
++    #[cfg(all(feature = "metal", target_os = "macos"))]
+     Metal,
+ }
+ 
+-- 
+2.56.0
+

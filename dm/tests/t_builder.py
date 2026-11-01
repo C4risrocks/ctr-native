@@ -13,6 +13,18 @@ from scripts import build_app_from_3ds as builder
 
 
 class TestBuilder(unittest.TestCase):
+    def setUp(self):
+        # CLI tests manufacture the native dependency at the AOT interface;
+        # cache provenance and actual recompilation are tested in t_build.
+        from dm.build.models import AotArtifact
+        def synthetic_aot(flow, prepared, stamp):
+            library = Path.home() / "Library/Application Support/3dsrecomp" / f"{prepared.title_id}.dylib"
+            flow.stage_end("synthetic AOT dependency")
+            return AotArtifact(prepared.title_id, library, None, "synthetic", True)
+        adapter = patch("dm.build.pipeline.obtain_aot", side_effect=synthetic_aot)
+        adapter.start()
+        self.addCleanup(adapter.stop)
+
     def test_cleanup_is_confined_to_current_extract(self):
         from types import SimpleNamespace
         for directory_input in (False, True):

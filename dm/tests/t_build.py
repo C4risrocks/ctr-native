@@ -101,12 +101,13 @@ class PipelineTests(unittest.TestCase):
             second = self.build_once(rom, root, home)
             self.assertTrue(second.aot.reused)
             # corrupt the manifest: the cache falls out of trust and rebuilds
-            fingerprint_dir = next((root / "00040000000ec300_build/aot").glob("*"))
+            fingerprint_dir = first.aot.dylib.parent
             manifest = fingerprint_dir / "manifest.json"
             data = json.loads(manifest.read_text())
             data["library_sha256"] = "0" * 64
             manifest.write_text(json.dumps(data))
-            _ = self.build_once(rom, root, home)
+            rebuilt = self.build_once(rom, root, home)
+            self.assertTrue(rebuilt.aot.compiled)
             third = self.build_once(rom, root, home)
             self.assertTrue(third.aot.reused)
 
@@ -118,6 +119,62 @@ class PipelineTests(unittest.TestCase):
             self.assertFalse(fourth.aot.reused)
             self.assertNotEqual(
                 (root / "recompiler").stat().st_mtime_ns, older_stamp)
+
+    def test_corrupt_library_is_rebuilt_and_global_library_is_ignored(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            make_stub_tools(root)
+            home = root / "home"
+            rom = build_card_image(build_cxi_partition(), root / "synthetic.3ds")
+            first = self.build_once(rom, root, home)
+            expected = first.aot.dylib.read_bytes()
+            installed = home / "Library/Application Support/3dsrecomp" / f"{DEFAULT_TID}.dylib"
+            installed.parent.mkdir(parents=True)
+            installed.write_bytes(b"wrong revision")
+            first.aot.dylib.write_bytes(b"corrupted cache")
+            second = self.build_once(rom, root, home)
+            self.assertTrue(second.aot.compiled)
+            self.assertEqual(second.aot.dylib.read_bytes(), expected)
+            self.assertEqual(installed.read_bytes(), b"wrong revision")
+            bundled = second.app / "Contents/Resources/game" / f"{DEFAULT_TID}.dylib"
+            self.assertEqual(bundled.read_bytes(), expected)
+            self.assertTrue(self.build_once(rom, root, home).aot.reused)
+
+    def test_cache_manifest_identity_is_checked(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            make_stub_tools(root)
+            home = root / "home"
+            rom = build_card_image(build_cxi_partition(), root / "synthetic.3ds")
+            first = self.build_once(rom, root, home)
+            manifest = first.aot.dylib.parent / "manifest.json"
+            for field in ("format", "title_id", "arch", "fingerprint"):
+                with self.subTest(field=field):
+                    data = json.loads(manifest.read_text())
+                    data[field] = "wrong"
+                    manifest.write_text(json.dumps(data))
+                    rebuilt = self.build_once(rom, root, home)
+                    self.assertTrue(rebuilt.aot.compiled)
+
+    def test_default_compiler_does_not_trust_installed_library(self):
+        from dm.build.models import BuildError
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            make_stub_tools(root)
+            home = root / "home"
+            rom = build_card_image(build_cxi_partition(), root / "synthetic.3ds")
+            installed = home / "Library/Application Support/3dsrecomp" / f"{DEFAULT_TID}.dylib"
+            installed.parent.mkdir(parents=True)
+            installed.write_bytes(b"unverified")
+            with self.assertRaises(BuildError):
+                self.build_once(rom, root, home, recompiler_bin=None)
+            compiler = root / "vendors/3dsrecomp/target/release/3dsrecomp"
+            compiler.parent.mkdir(parents=True)
+            compiler.write_text(RECOMPILER_STUB)
+            compiler.chmod(0o755)
+            result = self.build_once(rom, root, home, recompiler_bin=None)
+            self.assertTrue(result.aot.compiled)
+            self.assertNotEqual(result.aot.dylib.read_bytes(), installed.read_bytes())
 
     def test_language_change_rebuilds_the_package_not_the_aot(self):
         with TemporaryDirectory() as folder:

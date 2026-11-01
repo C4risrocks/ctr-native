@@ -33,3 +33,6 @@ como otro parche numerado y actualiza su hash de árbol en el lock.
 | `0017-metal-m10-present-parity-metalfixes.patch` | **Metal M1.0+M2**: las pantallas del juego como texturas Metal por `place()`, fix `setAllowGPUOptimizedContents(false)` + StorageMode Managed (driver AGX 26.5), settings `renderer: metal` + combo, companion por renderer-kind del main | local (Metal) |
 | `0018-metal-present-root-cause-fixes.patch` | **el blanco del M1.0, resuelto**: `presentDrawable` antes del commit, rect-per-draw de 16 bytes + esquinas por `vertex_id` (el fetch de 72-floats nunca rasterizaba), uv con la fila 0 arriba, `set_top_width/set_layout/set_stereo/set_scaling` reenviados (top de 3px), `framebufferOnly` off | local (Metal) |
 | `0019-metal-present-decoupled-thread.patch` | **M1.0.5**: el present Metal sale a thread propio — bundle completo por canal de 1 frame en vuelo, layout por snapshot `Arc<Mutex>`, texturas en ping-pong; quita los ~16 ms de `nextDrawable` del presupuesto del raster (25.8 → objetivo ~50 fps con software) | local (Metal) |
+
+`0018a-metal-feature-gates.patch` exports f7c8e6f before 0019; it restores
+feature guards for non-Metal builds and the exact base required by 0019.

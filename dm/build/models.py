@@ -62,7 +62,7 @@ class PreparedGame:
 class AotArtifact:
     """The library the app runs, its fingerprint and provenance."""
     title_id: str
-    dylib: Path          # the installed place the packer reads
+    dylib: Path          # the verified cache artifact the packer reads
     hints_path: Path | None
     fingerprint: str
     reused: bool
