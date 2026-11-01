@@ -2,11 +2,14 @@
 
 ## Estado (2026-10-31)
 
-**Ejecutado por la vía USA Decrypted** (edición `0004000000125500` CTR-P-AJRE,
-copia en claras flags `NoCrypto`/`FixedKey` presente en la raíz del repo; sin
-llaves en el flujo del build). Pendiente de confirmación: la prueba jugable
-interactiva (español, menús repetidos sin fallo ImageIO, guardado).
+**Ejecutado y con primera sesión jugable confirmada** por la vía USA Decrypted
+(edición `0004000000125500` CTR-P-AJRE, copia con flags `NoCrypto`/`FixedKey`
+presente en la raíz del repo; sin llaves en el flujo del build aparte del
+working copy de las particiones secundarias con el boot9 local).
 
+- Sesión real medida (kpi automático de G5): 289 s, **avg 59.6 fps**,
+  min 6.9 (cargas), **5 underruns (1.04/min)** con el pin de audio de G2,
+  vértices CPU (como G1 dicta en Apple Silicon).
 - Perfil: `dm/games/0004000000125500/profile.tsv` con el pin
   `verified_md5=070077e99b3ab90cbfc8c2e6161c17d7` (copia que corre), notas en
   su `README.md` (incluye la procedencia del recibido EUR cifrado:
@@ -16,6 +19,8 @@ interactiva (español, menús repetidos sin fallo ImageIO, guardado).
 - Empaquetado: `The Legend of Zelda - Majoras Mask 3D.app` (humo headless
   verde, firma ad-hoc verificada, sandbox hermana propia); el launcher apunta
   a la copia descifrada en `0004000000125500_build/decrypted/`.
+- Queda por confirmar del jugador al revisar la partida: el guardado
+  persistente (abrir-jugar-guardar-cerrar-reabrir).
 
 ## Objetivo y requisito previo
 
