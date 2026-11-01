@@ -64,13 +64,25 @@ corre a 57.9 porque el dibujo vive EN OTRO HILO.
 | Software + present metal **correcto, en el hilo principal** | 25.8 | nextDrawable bloquea el hilo del raster |
 | Software + present metal **desacoplado (M1.0.5)** | ⏳ ~50 objetivo | el present a thread propio por mpsc |
 
-## M1.0.5 ⏳ — el present sale del hilo del juego
+## M1.0.5 ✅ — el present sale del hilo del juego (patch 0019)
 
-nextDrawable en main-thread, codificar + commit + presentar en un hilo
-propio por mpsc (los píxeles se clonan: ~7 MB/frame, ~1 ms). El hilo del
-juego se queda con el raster; el vsync deja de morderle el presupuesto.
-Tras eso, jugabilidad metal+software ≈ 50 fps; los 60 clavados llegan con
-M1.1 (`HardwareMetal`), donde el dibujo también corre en GPU.
+El bundle Metal completo (device, queue, layer, pipeline, texturas con
+ping-pong de dos sets) vive en un hilo propio; el hilo del juego clona
+los píxeles (~7 MB, ~1 ms) y los manda por un canal de **un frame en
+vuelo** — el raster y la espera del drawable se solapan en vez de
+encolarse. Config de layout por `Arc<Mutex>` snapshot, tamaño de ventana
+sellado en cada job, y el drop del presentador cierra el canal.
+
+Verificado: el patrón compone idéntico al mono-hilo (captura), y
+`native_smoke` queda 7/7. A medir con el kpi del jugador.
+
+**Y la confirmación del flame-graph (la sesión del 2026-11-01, con el
+present desacoplado corriendo): el 66% del hilo del juego ya no espera
+el drawable — espera el `rayon::LockLatch` del fill del raster software**
+(529% CPU en el pool de bandas). El present salió del presupuesto del
+todo; lo que queda es la pared de CPU del raster MM3D a 3x, y esa es
+exactamente la diana del M1.1 (`HardwareMetal`). A 2x el fill baja ~×0.4
+y la jugabilidad vuelve a ~55 fps mientras M1.1 llega.
 
 ## Riesgos consumados del M1.0
 
