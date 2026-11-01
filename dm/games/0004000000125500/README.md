@@ -15,6 +15,9 @@ las flags `NoCrypto`/`FixedKey` del builder — cero llaves).
   instalado en `~/Library/Application Support/3dsrecomp/0004000000125500.dylib`.
 - Idioma: `--language es` (la edición USA trae español).
 - Sandbox propia de esta app, separada de la de ALBW.
+- **Validación 2026-10-31: criterios del PLAN_MAJORAS_MASK_3D.md completos** —
+  sesión 289 s (avg 59.6 fps, 5 underruns con el pin de G2), español, menús
+  sin fallo ImageIO y **guardado persistente** (guardar→cerrar→reabrir→recuperar).
 - Dependencia del launcher: la ROM que corre es la copia descifrada de
   `0004000000125500_build/decrypted/…Decrypted.decrypted.3ds` (borrar esa
   carpeta rompe la app; el dump original raíz queda intacto).

@@ -1,11 +1,18 @@
 # Majora’s Mask 3D: compilación y prueba jugable en macOS
 
-## Estado (2026-10-31)
+## Estado (2026-10-31) — ✅ COMPLETO
 
-**Ejecutado y con primera sesión jugable confirmada** por la vía USA Decrypted
-(edición `0004000000125500` CTR-P-AJRE, copia con flags `NoCrypto`/`FixedKey`
-presente en la raíz del repo; sin llaves en el flujo del build aparte del
-working copy de las particiones secundarias con el boot9 local).
+**Ejecutado y validado por la vía USA Decrypted** (edición
+`0004000000125500` CTR-P-AJRE, copia con flags `NoCrypto`/`FixedKey` presente
+en la raíz del repo; sin llaves en el flujo del build aparte del working copy
+de las particiones secundarias con el boot9 local).
+
+Criterios del plan, todos cumplidos: español en ambas pantallas ✓, ambos
+pantallas ✓, controles ✓, audio ✓, redimensionado/fullscreen ✓, menús nativos
+repetidos sin fallo ImageIO ✓, **guardado dentro del juego persistente
+(confirmado por el jugador: guardar → cerrar → reabrir → recuperar)** ✓,
+reuso del builder con sandbox intacta ✓, y los gates del repo: 63 tests,
+ruff y pyright ✓.
 
 - Sesión real medida (kpi automático de G5): 289 s, **avg 59.6 fps**,
   min 6.9 (cargas), **5 underruns (1.04/min)** con el pin de audio de G2,
