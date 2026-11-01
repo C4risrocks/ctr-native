@@ -81,4 +81,4 @@ Hallazgos medidos (cierran el misterio del "vertices shaded on the CPU"):
 
 | Sesión | Compuesto | kpi |
 |---|---|---|
-| MM3D `--renderer metal --rasterizer software` — **pendiente de cerrar en limpio** | raster CPU + texturas Metal + `presentDrawable` | se llena con la `session kpi` después de la partida del 2026-11-01 |
+| MM3D metal+software, present en el hilo principal (M1.0 real) | raster CPU + texturas Metal + `presentDrawable` | 6290 frames/244 s, **avg 25.8 fps**, min 33.6, dry 23 (5.66/min), 0% gpu-shaded · el `sample` mostró 85% del loop en `nextDrawable`: M1.0.5 desacopla el present |

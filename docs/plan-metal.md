@@ -48,6 +48,30 @@ PICA-VS trasladado a MSL con shading por GPU frente al CPU-shading
   reabre con el disparador cumplido (MM3D 59.6 fps).
 - `docs/patches/zakuro/` — la serie de parches del fork (0001…0017).
 
+## La lección del presupuesto del M1.0 (2026-11-01)
+
+La primera sesióm real del jugador dispuso un freeze **al entrar** y 25.8
+fps medios. El `sample` del proceso congelado lo explicó todo: el 85% del
+loop estaba dormido en `CAMetalLayer nextDrawable` (espera del vsync) —
+el present Metal bloquea el mismo hilo donde corre el raster software
+(MM3D 3x ≈ 18–20 ms) → ~35 ms/frame → 26 fps. La vía vulkan-hardware
+corre a 57.9 porque el dibujo vive EN OTRO HILO.
+
+|朱元璋 Camino (MM3D, este M1 Pro) | fps | origen |
+|---|---|---|
+| Vulkan, raster hardware + present vulkan | 57.9–60 | dibujo off-thread |
+| Software + present metal **sin presentDrawable** (bug) | 54.6 | invisible al compositor: sin contrapresión |
+| Software + present metal **correcto, en el hilo principal** | 25.8 | nextDrawable bloquea el hilo del raster |
+| Software + present metal **desacoplado (M1.0.5)** | ⏳ ~50 objetivo | el present a thread propio por mpsc |
+
+## M1.0.5 ⏳ — el present sale del hilo del juego
+
+nextDrawable en main-thread, codificar + commit + presentar en un hilo
+propio por mpsc (los píxeles se clonan: ~7 MB/frame, ~1 ms). El hilo del
+juego se queda con el raster; el vsync deja de morderle el presupuesto.
+Tras eso, jugabilidad metal+software ≈ 50 fps; los 60 clavados llegan con
+M1.1 (`HardwareMetal`), donde el dibujo también corre en GPU.
+
 ## Riesgos consumados del M1.0
 
 ### El bug del blanco, de caza (2026-11-01)
