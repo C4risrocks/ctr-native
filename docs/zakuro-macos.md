@@ -14,7 +14,7 @@ local preventivo, ver "Resueltas").
 | Headless ×600 frames | `--interpreter --mute` | 32.11 s · 83.7 MIPS · software renderer |
 | Headless ×600 frames | **AOT recompilado** | **6.10 s · 440.9 MIPS · interpreted 0.04%** |
 | **ALBW en ventana (sesión real)** | AOT + Vulkan portability | ✅ ~4 h 27 min · present FIFO · pantalla 3x · audio HLE · underruns de audio esporádicos |
-| **MM3D 125500 (segundo juego, 2026-10-31)** | AOT 248/248 · Vulkan portability | ✅ sesión real de 289 s: **avg 59.6 fps**, min 6.9 (cargas) · **5 underruns (1.04/min)** con el pin de G2 · español vía `--language es` · sandbox propia |
+| **MM3D 125500 (segundo juego, 2026-10-31)** | AOT 248/248 unidades compiladas · Vulkan portability | ✅ sesión real de 289 s: **avg 59.6 fps**, min 6.9 (cargas) · **5 underruns (1.04/min)** con el pin de G2 · español vía `--language es` · sandbox propia |
 
 - AOT build: `3dsrecomp build` → **259/259** funciones, 304 MiB de C, 226.6 s
 - `.dylib` (arm64, Mach-O) instalado en `~/Library/Application Support/3dsrecomp/00040000000EC300.dylib` — pasa AMFI sin parches (firma válida embedida)

@@ -1,18 +1,22 @@
 # Majora’s Mask 3D: compilación y prueba jugable en macOS
 
-## Estado (2026-10-31) — ✅ COMPLETO
+## Estado (2026-10-31) — USA validada; objetivo EUR pendiente
 
-**Ejecutado y validado por la vía USA Decrypted** (edición
-`0004000000125500` CTR-P-AJRE, copia con flags `NoCrypto`/`FixedKey` presente
-en la raíz del repo; sin llaves en el flujo del build aparte del working copy
-de las particiones secundarias con el boot9 local).
+La app existente corresponde a la edición USA `0004000000125500`
+(CTR-P-AJRE), distinta de la EUR `0004000000125600` solicitada originalmente.
+La validación USA no completa el objetivo EUR ni supone aceptar una sustitución
+de edición. Para completar EUR falta una copia descifrada de esa misma edición,
+su perfil, su biblioteca AOT y sus pruebas de aceptación.
 
-Criterios del plan, todos cumplidos: español en ambas pantallas ✓, ambos
-pantallas ✓, controles ✓, audio ✓, redimensionado/fullscreen ✓, menús nativos
-repetidos sin fallo ImageIO ✓, **guardado dentro del juego persistente
-(confirmado por el jugador: guardar → cerrar → reabrir → recuperar)** ✓,
-reuso del builder con sandbox intacta ✓, y los gates del repo: 63 tests,
-ruff y pyright ✓.
+La fuente USA tiene la partición principal NoCrypto/FixedKey y una secundaria
+cifrada. Su copia de trabajo se preparó con boot9 local y tiene ambas particiones
+NoCrypto; las claves no se incorporan al paquete ni al repositorio.
+
+La validación registrada para USA incluye español, ambas pantallas, controles,
+audio, redimensionado/fullscreen, menús sin fallo ImageIO, guardado persistente
+confirmado por el jugador y reuso del builder con sandbox intacta. Los 63 tests,
+Ruff y Pyright pasan; la reproducción del fork requiere el árbol actualizado
+en vendors.lock.json.
 
 - Sesión real medida (kpi automático de G5): 289 s, **avg 59.6 fps**,
   min 6.9 (cargas), **5 underruns (1.04/min)** con el pin de audio de G2,
@@ -21,13 +25,14 @@ ruff y pyright ✓.
   `verified_md5=070077e99b3ab90cbfc8c2e6161c17d7` (copia que corre), notas en
   su `README.md` (incluye la procedencia del recibido EUR cifrado:
   md5 `4a491c638cf770278a392ebd677f6bef`, sha256 `8f9a53b7…`).
-- AOT: 248/248 funciones (144.7 s), `~/Library/Application Support/
+- AOT: 248/248 unidades compiladas (144.7 s), `~/Library/Application Support/
   3dsrecomp/0004000000125500.dylib`.
 - Empaquetado: `The Legend of Zelda - Majoras Mask 3D.app` (humo headless
   verde, firma ad-hoc verificada, sandbox hermana propia); el launcher apunta
   a la copia descifrada en `0004000000125500_build/decrypted/`.
-- Queda por confirmar del jugador al revisar la partida: el guardado
-  persistente (abrir-jugar-guardar-cerrar-reabrir).
+- Guardado USA: confirmado por el jugador (guardar → cerrar → reabrir → recuperar).
+- Verificación diferencial AOT: no realizada; el binario instalado no incluye
+  `--features verify`. El arranque headless no sustituye esa comprobación.
 
 ## Objetivo y requisito previo
 
