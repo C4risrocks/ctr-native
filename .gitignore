@@ -10,9 +10,10 @@
 # Switch formats are excluded too.
 *.nsp
 
-# Console keys: your boot9/movable-sed stay on your machine.
+# Console keys: your boot9/boot11/movable-sed stay on your machine.
 *.bin.keys
 boot9*
+boot11*
 *.otp
 movable.sed
 keys.txt
