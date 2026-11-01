@@ -8,7 +8,10 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from dm.build import BuildRequest, build
+from dm.build.models import BuildError
 from dm.tests.fixtures import build_card_image, build_cxi_partition
+
+from dm.tools import progress as dm_progress
 
 DEFAULT_TID = "00040000000ec300"
 RECOMPILER_STUB = """#!/bin/sh
@@ -291,3 +294,61 @@ def _quiet():
         def say(self, message, error=False):
             pass
     return Quiet()
+
+class ErrorNormalizationTests(unittest.TestCase):
+    """P2-6: every failure ends exactly one structured, stage-closing error."""
+
+    def json_run(self, rom: Path, root: Path, home: Path, **overrides):
+        from io import StringIO
+        events = StringIO()
+        request = request_for(rom, root, **overrides)
+        with patch("sys.stdout", events), \
+                patch.object(Path, "home", return_value=home), \
+                self.assertRaises(BuildError) as raised:
+            build(request, progress=dm_progress.Progress("json"))
+        parsed = [json.loads(line) for line in
+                  events.getvalue().splitlines() if line.startswith("{")]
+        return parsed, raised.exception
+
+    def test_unexpected_failure_normalizes_with_its_open_stage(self):
+        import dm.build.pipeline as pipeline_module
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            make_stub_tools(root)
+            home = root / "home"
+            rom = build_card_image(build_cxi_partition(), root / "synthetic.3ds")
+            def exploding(self, *args, **kwargs):
+                raise RuntimeError("synthetic detonation")
+            with patch.object(pipeline_module.Pipeline, "publish_stage", exploding):
+                events, error = self.json_run(rom, root, home)
+            self.assertEqual(error.stage, "pipeline")
+            self.assertIn("unexpected failure", error.message)
+            self.assertIn("metadata and icon", error.message)
+            ends = [event for event in events if event["ev"] == "stage_end"]
+            self.assertTrue(ends and ends[-1]["ok"] is False)
+            self.assertIn("unexpected: synthetic detonation", ends[-1]["summary"])
+            last = events[-1]
+            self.assertEqual(last["ev"], "error")
+            self.assertEqual(last["stage"], "pipeline")
+            self.assertTrue(any("RuntimeError" in line for line in last.get("traceback", [])))
+
+    def test_structured_error_event_for_expected_failures(self):
+        import dm.build.pipeline as pipeline_module
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            make_stub_tools(root)
+            home = root / "home"
+            rom = build_card_image(build_cxi_partition(), root / "synthetic.3ds")
+            def failing_stage(self, *args, **kwargs):
+                raise BuildError("publish", "synthetic packaging refusal")
+            with patch.object(pipeline_module.Pipeline, "publish_stage", failing_stage):
+                events, error = self.json_run(rom, root, home)
+            self.assertEqual(error.stage, "publish")
+            wants = [event for event in events if event["ev"] == "error"]
+            self.assertEqual(len(wants), 1)
+            self.assertEqual(wants[0]["stage"], "publish")
+            self.assertEqual(wants[0]["msg"], "synthetic packaging refusal")
+            self.assertNotIn("traceback", wants[0])
+            ends = [event for event in events if event["ev"] == "stage_end"]
+            self.assertTrue(ends and ends[-1]["ok"] is False)
+

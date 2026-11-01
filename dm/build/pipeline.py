@@ -16,6 +16,7 @@ package; one edition never silently replaces another.
 from __future__ import annotations
 
 import subprocess
+import traceback
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
@@ -101,6 +102,16 @@ class Pipeline:
     def say(self, message: str, error: bool = False) -> None:
         self.progress.say(message, error=error)
 
+    def report_error(self, stage: str, message: str, *, kind: str = "build",
+                     traceback: list[str] | None = None) -> None:
+        """P2-6: exactly one structured failure record per build — a Progress
+        duck-type without the method (test stubs) degrades to a say."""
+        emitter = getattr(self.progress, "error", None)
+        if emitter is not None:
+            emitter(message, stage=stage, kind=kind, traceback=traceback)
+        elif hasattr(self.progress, "say"):
+            self.progress.say(f"[{stage}] {message}", error=True)
+
     def stage_end(self, message: str) -> None:
         if self._open_stage is not None:
             self.progress.stage_end(self._open_stage, message)
@@ -133,7 +144,22 @@ class Pipeline:
             if self._open_stage is not None:
                 self.progress.stage_end(self._open_stage,
                                         f"{error.stage}: {error.message}", ok=False)
+                self._open_stage = None
+            self.report_error(error.stage, error.message)
             raise
+        except Exception as error:  # unexpected: the edge normalizes so every
+            # failure surfaces one structured BuildError with its open stage
+            open_stage = self._open_stage
+            label = open_stage.stage_name if open_stage is not None else "pipeline"
+            if open_stage is not None:
+                self.progress.stage_end(open_stage, f"unexpected: {error}", ok=False)
+                self._open_stage = None
+            self.report_error("pipeline", f"unexpected failure in '{label}': {error}",
+                              kind="unexpected",
+                              traceback=traceback.format_exception(
+                                  type(error), error, error.__traceback__))
+            raise BuildError("pipeline",
+                             f"unexpected failure in '{label}': {error}") from error
 
     # 1 -------------------------------------------------------------------------
     def discover(self, stage1) -> PreparedGame:

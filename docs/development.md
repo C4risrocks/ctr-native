@@ -98,9 +98,13 @@ host/AOT copies and the external ROM. Settings remain owned by the runtime.
 ## Reporting and tests
 
 `--progress json` writes one JSON event per stdout line: `stage`, `step`,
-`progress`, `stage_end`, `say`. Events carry `k`/`n`; successful runs finish at
-8/8 and failures close their current stage with `ok:false`. `auto` chooses bars
-on a TTY and lines behind a pipe. `off` keeps stage summaries only.
+`progress`, `stage_end`, `say`, and `error`. Events carry `k`/`n`; successful
+runs finish at 8/8 and failures close their current stage with `ok:false`
+followed by one `error` event (`kind`: `build` | `unexpected`, `stage` when it
+belongs to a stage, and `traceback` only for unexpected ones). The CLI does not
+duplicate the pipeline's error event; failures before the pipeline report on
+their own. `auto` chooses bars on a TTY and lines behind a pipe. `off` keeps
+stage summaries only.
 
 Build metadata is recorded in `<id>_build/logs/pack.tsv`; the builder does not
 promise a separate log file for every stage. Runtime logs live under the

@@ -1,8 +1,10 @@
 # Plan Metal (G4→M): backend Metal directo para ctr-native
 
-> Auditoría vigente: la presentación Metal sigue siendo experimental. La
-> reutilización de texturas y la entrega bloqueante son P2 abiertos; los KPI
-> de sesiones no los cierran. Consulta [el backlog](../PLAN_REFACTOR_PIPELINE.md).
+> Auditoría vigente: la presentación Metal sigue siendo experimental. Los
+> P2-7 (sincronización de texturas) y P2-8 (canal bloqueante) están
+> corregidos en `dev` y quedan verificados por smoke (parche 0020);
+> quedan abiertos P2-5 (huella AOT) y P2-9 (integración real de
+> 3dsrecomp). Consulta [el backlog](../PLAN_REFACTOR_PIPELINE.md).
 
 ## Estado (2026-11-01) — M0 ✅ **ejecutado y merged a master**
 
@@ -27,12 +29,13 @@ PICA-VS trasladado a MSL con shading por GPU frente al CPU-shading
 | Fase | Contenido | Criterio de salida |
 |---|---|---|
 | **M0 ✅** | feature `metal` (objc2-bindings), `MetalPresenter` con CAMetalLayer sobre el NSView del window de winit, `--renderer metal` en CLI/settings/menús, spike timed | el present a 60 fps on-screen ✓ (hecho) |
-| **M0.5 ✅ GO** | naga `msl-out` + `compile_msl` y test con 189 programas aleatorios: **189/189 MSL escritos, 189/189 compilados por el device en 606 ms (3.2 ms/programa, cero rechazos)** | **GO al backend completo (M1-M3)** |
-| **M1.0 ✅ present parity (2026-11-01, verificada con ojos)** | las pantallas del juego como texturas Metal (`replaceRegion`), un draw por pantalla: rect NDC de 16 bytes inline (`setVertexBytes`) y esquinas sintetizadas por `vertex_id` — el fetch de 72-floats por puntero, correcto en papel, **nunca rasterizaba**; overlays egui **pendientes (M2.1)**; fix driver AGX 26.5: `AllowGPUOptimizedContents(false)` + **Managed** | test-pattern metal **VISTO en pantalla**: rojo 400×240 arriba, azul 320×240 abajo, letterbox navy ✓ · 120 frames a 60.2 fps · `native_smoke` 7/7 · el bug del blanco documentado en patch 0018 |
+| **M0.5 ✅ viabilidad** | naga `msl-out` + `compile_msl` y test con 189 programas aleatorios: **189/189 MSL escritos, 189/189 compilados por el device en 606 ms (3.2 ms/programa, cero rechazos)** | confirma que la **traducción y compilación** del PICA-MSL funciona; corrección visual, rendimiento del raster completo y 60 fps quedan como objetivos por medir en M1.1 — no es un GO de rendimiento |
+| **M1.0 ✅ present parity (verificada con ojos)** | las pantallas del juego como texturas Metal (`replaceRegion`), un draw por pantalla: rect NDC de 16 bytes inline (`setVertexBytes`) y esquinas sintetizadas por `vertex_id` — el fetch de 72-floats por puntero, correcto en papel, **nunca rasterizaba**; overlays egui **pendientes (M2.1)**; fix driver AGX 26.5: `AllowGPUOptimizedContents(false)` + **Managed** | test-pattern metal **VISTO en pantalla**: rojo 400×240 arriba, azul 320×240 abajo, letterbox navy ✓ · 120 frames a 60.2 fps · `native_smoke` 7/7 · el bug del blanco documentado en patch 0018 |
+| **M1.0.5 ✅ present desacoplado (patch 0019)** | el bundle Metal completo (device, queue, layer, pipeline, texturas ping-pong) en thread propio; canal de 1 frame en vuelo; `setDrawableSize` solo en cambios | partida real **47.5 fps** (×1.84 vs 25.8), 10.5 min sin freeze; flame-graph: el present salió del presupuesto, el cuello restante es el fill rayon del raster (zona M1.1) · smoke 7/7 |
 | **M2 ✅** | companion Metal (por renderer-kind del main), settings persistentes (`renderer: "metal"` toml + combo menús), `native_smoke` +2 casos metal | **7/7 escenarios nativos verdes** (5 vulkan + 2 metal, single y shared) |
-| **M1.1 ⏳ backlog (raster)** | `HardwareMetal` PICA-pipeline a Metal (formatos→MTLPixelFormat, depth 32f, blending, shaders GPU-metal) — multi-sesión, el resto del fork depende de Vulkan | headless ×600: MIPS ≥ 85% del mejor camino |
-| **M3 ⏳ cierre** | kpi real del jugador con Metal; tabla Vulkan-vs-Metal; decision de shading default | docs y el kpi del jugador |
-| **M3 cierre G4** | kpi real del jugador con Metal; tabla comparativa Vulkan-vs-Metal en `docs/zakuro-macos.md`; patches 0014+ exportados y PR de cortesía preparado | docs cerrados; decisión de shading default documentada |
+| **M3 ◐ comparación parcial** | dos columnas medidas en `docs/zakuro-macos.md`: **Vulkan 58.1 fps (dry 0.71/min)** vs **Metal+software 47.5 fps (dry alta, cadencia sub-60)** | HardwareMetal **no tiene resultado**: el plan Metal **no se declara cerrado** hasta medir M1.1 |
+| **M1.1 ⏳ desarrollo abierto (raster)** | `HardwareMetal` PICA-pipeline a Metal (formatos→MTLPixelFormat, depth 32f, blending, shaders GPU-metal) — multi-sesión, el resto del fork depende de Vulkan | headless ×600: MIPS ≥ 85% del mejor camino |
+| **M2.1 ⏳ desarrollo abierto** | overlay egui dibujado bajo Metal | el overlay se dibuja sobre las pantallas en la misma ventana |
 
 ## Riesgos (los mismos del informe G4, actualizados)
 

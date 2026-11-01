@@ -113,12 +113,18 @@ def main(argv: list[str] | None = None) -> int:
     progress = progress_module.Progress(args.progress)
     try:
         request = make_request(args)
+    except Exception as error:  # before the pipeline: this side reports first
+        progress.error(f"unexpected failure: {error}", kind="unexpected",
+                       traceback=traceback.format_exc().splitlines())
+        return 1
+    try:
         result = build(request, progress=progress)
-    except BuildError as error:
-        progress.say(str(error), error=True)
-        if args.progress == "json":
-            for line in traceback.format_exc().splitlines():
-                progress.say(line, error=True)
+    except BuildError:
+        # the pipeline emitted the one structured error event already
+        return 1
+    except Exception as error:  # the pipeline guarantees BuildError; belt and braces
+        progress.error(f"unexpected failure: {error}", kind="unexpected",
+                       traceback=traceback.format_exc().splitlines())
         return 1
     total = time.monotonic() - started
     progress.say(f"build finished in {int(total)}s")

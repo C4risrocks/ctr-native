@@ -109,6 +109,22 @@ class Progress:
         elif self.mode != "off":
             self._line(f"[{clock()}] {'ERROR: ' if error else ''}{message}")
 
+    def error(self, message: str, *, stage: str | None = None, kind: str = "build",
+              traceback: list[str] | None = None) -> None:
+        """one structured failure record; tracebacks ride inside the event."""
+        if self.stream:
+            event: dict[str, Any] = {"ev": "error", "t": round(time.monotonic(), 3),
+                                     "kind": kind, "msg": message}
+            if stage is not None:
+                event["stage"] = stage
+            if traceback:
+                event["traceback"] = traceback
+            self._write(event)
+        elif self.mode != "off":
+            self._line(f"[{clock()}] ERROR [{stage or kind}]: {message}")
+            for line in traceback or []:
+                self._line(f"    {line}")
+
     # -- internals -----------------------------------------------------------
 
     def _eta(self, state: StageState) -> float | None:

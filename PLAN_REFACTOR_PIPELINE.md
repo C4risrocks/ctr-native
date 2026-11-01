@@ -7,7 +7,7 @@ La implementación inicial se integró desde `refactor/pipeline` (`7cb83b0`,
 corregidos en `ca51d6a` y `725bb82`, y cinco P2 abiertos, incluido uno parcial.
 La tabla de auditoría al final es la referencia de sus estados.
 
-Validación del cierre P1: 75 pruebas Python, una omitida por P2-9, Ruff,
+Validación del cierre P1: 77 pruebas Python (P2-9 sigue omitiendo una), Ruff,
 Pyright y bootstrap local y desde clones nuevos correctos. Los resultados
 históricos no implican cierre de los pendientes ni validación de otra edición.
 Las secciones de diseño siguientes conservan el objetivo; los detalles aún no
@@ -116,9 +116,9 @@ El refactor estará aceptado cuando un título nuevo pueda recorrer el flujo com
 | 3. Selección AOT sin validar contenido/procedencia | P1 | Corregido: manifiesto y SHA-256 verificados; se empaqueta la caché, no la librería global |
 | 4. Fork irreproducible: parche 0019 y lock | P1 | Corregido: exportado f7c8e6f como 0018a; lock actualizado; bootstrap nuevo verificado |
 | 5. Huella AOT incompleta | P2 | Pendiente |
-| 6. Errores y cierre de etapas JSON | P2 | Parcial: caché AOT cierra etapa; normalización de errores pendiente |
-| 7. Sincronización de texturas Metal | P2 | Pendiente |
-| 8. Canal Metal bloqueante | P2 | Pendiente |
+| 6. Errores y cierre de etapas JSON | P2 | Completo (branch `dev`): fallos inesperados se normalizan a `BuildError("pipeline", ...)` con `stage_end(ok:false)` del stage abierto; el JSON contrataja un único `ev:error` gestructurado (`kind`, `stage`, `traceback` solo en inesperados); tests incluidos |
+| 7. Sincronización de texturas Metal | P2 | Corregido (branch `dev`): tres sets round-robin + `waitUntilCompleted` del job que muestreó el set antes de reusarlo |
+| 8. Canal Metal bloqueante | P2 | Corregido (branch `dev`): el present entra por `try_send` — el loop suelta el frame si el worker va a la zaga; contadད y logueado |
 | 9. Integración real 3dsrecomp omitida | P2 | Pendiente |
 
 Esta entrega se limita a P1-1 y P1-2. Conserva ROM original, preparada,
