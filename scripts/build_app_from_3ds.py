@@ -4,11 +4,10 @@
 
     python3 scripts/build_app_from_3ds.py ~/ctr-native-roms/ALBW -o ~/Desktop
 
-One script, one deliverable, like nxnative's NSP builder: parse the container
-(NCSD/NCCH, no keys needed for decrypted or FixedKey dumps), verify it against
-the profile when the profile pins a hash, and pack a `<name>.app` that runs
-the AOT-compiled game natively (the zakuro host), keeping saves, caches and
-logs inside its own sandbox.
+One script, one deliverable, like nxnative's NSP builder: the common pipeline
+(`dm/build`) walks discover → identify → verify → prepare → obtain the AOT →
+metadata/icon → pack+sign → verify, and this CLI only shapes its inputs.
+Saves, settings and logs of each game live in the app's own sandbox.
 
 Console keys and your dumps stay on your machine and out of git: passing
 `--boot9` (or `--keys`) only ever decrypts into `<id>_build/` — it is never
@@ -26,8 +25,11 @@ All options:
     --no-verify                 skip the profile's MD5 verification
     --boot9 PATH                your boot9: decrypt encrypted partitions first
     --keys PATH                 a tsv keys file instead of boot9 (slot=hexkey)
+    --zakuro-bin PATH           the host binary (default: vendors/zakuro/target/release/zakuro)
+    --recompiler-bin PATH       the 3dsrecomp binary (default: vendors/3dsrecomp/target/release/3dsrecomp)
+    --rebuild-aot               ignore the AOT cache and rebuild the library
     --progress json|bar|lines|off    reporting mode (default: bar on a tty)
-    --no-keep-extracted         delete <id>_build/extract after success
+    --no-keep-directories       delete the per-title scratch folders after success
     --launch                    open the app when the build finishes
 """
 
@@ -35,66 +37,16 @@ from __future__ import annotations
 
 import argparse
 import shutil
-import subprocess
 import sys
 import time
 import traceback
-from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from dm.games import Profile, load_profile  # noqa: E402
-from dm.tools import ncch, pack_app, progress as progress_module  # noqa: E402
-from dm.tools.decrypt import DecryptError, KeySource, decrypt_card_image  # noqa: E402
-from dm.tools.ncch import (  # noqa: E402
-    ContainerError,
-    GameFile,
-    PartitionInfo,
-    Smdh,
-)
-
-TOOLKIT_VERSION = "ctr-native 0.2.0"
-LANGUAGE_REGION = {
-    "ja": 0, "en": 1, "fr": 2, "de": 3, "it": 4, "es": 5,
-    "zh-Hans": 6, "ko": 7, "nl": 8, "pt": 9, "ru": 10, "zh-Hant": 11,
-}
-
-
-@dataclass
-class Build:
-    """One game's build folder state (mirrors nxnative's `<id>_build/`)."""
-
-    source: Path
-    title_id: str
-    partition: PartitionInfo
-    profile: Profile
-    build_dir: Path
-    working_source: Path | None = None
-    logs: Path = field(init=False)
-    extract: Path = field(init=False)
-
-    def __post_init__(self) -> None:
-        self.logs = self.build_dir / "logs"
-        self.logs.mkdir(parents=True, exist_ok=True)
-        self.extract = self.build_dir / "extract"
-
-
-class BuildFailed(Exception):
-    """A build step that cannot continue (the log carries the detail)."""
-
-
-def main(argv: list[str] | None = None) -> int:
-    started = time.monotonic()
-    args = parse_args(argv)
-    progress = progress_module.Progress(args.progress)
-    ok = run(args, progress)
-    if not ok:
-        return 1
-    total = time.monotonic() - started
-    progress.say(f"build finished in {int(total)}s")
-    return 0
+from dm.build import BuildError, BuildRequest, build  # noqa: E402
+from dm.build.models import LANGUAGE_REGION  # noqa: E402
 
 
 def positive_int(value: str) -> int:
@@ -115,8 +67,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("game", help="a folder of .3ds/.3dz/.cci card images, or one card image")
     parser.add_argument("-o", "--output", default=None, help="where the .app lands")
-    parser.add_argument("--zakuro-bin", default=None, type=Path,
-                        help="path to the zakuro binary (default: vendors/zakuro/target/release/zakuro)")
     parser.add_argument("--app-name", default=None)
     parser.add_argument("--language", default="en", choices=sorted(LANGUAGE_REGION))
     parser.add_argument("--scale", default=3, type=positive_int,
@@ -126,295 +76,56 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--no-verify", action="store_true")
     parser.add_argument("--boot9", default=None, type=Path)
     parser.add_argument("--keys", default=None, type=Path)
+    parser.add_argument("--zakuro-bin", default=None, type=Path)
+    parser.add_argument("--recompiler-bin", default=None, type=Path)
+    parser.add_argument("--rebuild-aot", action="store_true")
     parser.add_argument("--progress", default="auto",
                         choices=("json", "bar", "lines", "off", "auto"))
-    parser.add_argument("--no-keep-extracted", action="store_true")
+    parser.add_argument("--no-keep-directories", action="store_true")
     parser.add_argument("--launch", action="store_true")
     return parser.parse_args(argv)
 
 
-def run(args: argparse.Namespace, progress: progress_module.Progress) -> bool:
-    stages_total = 7
-    state = progress.stage(1, stages_total, "discover")
-    game_build = None
+def make_request(args: argparse.Namespace) -> BuildRequest:
+    return BuildRequest(
+        game=Path(args.game).expanduser().resolve(),
+        output=Path(args.output).expanduser().resolve() if args.output else None,
+        app_name=args.app_name,
+        language=args.language,
+        scale=args.scale,
+        no_icon=args.no_icon,
+        allow_damaged=args.allow_damaged,
+        no_verify=args.no_verify,
+        boot9=args.boot9,
+        keys=args.keys,
+        zakuro_bin=args.zakuro_bin,
+        recompiler_bin=args.recompiler_bin,
+        rebuild_aot=args.rebuild_aot,
+        launch=args.launch,
+        root=ROOT,
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    started = time.monotonic()
+    args = parse_args(argv)
+    from dm.tools import progress as progress_module
+    progress = progress_module.Progress(args.progress)
     try:
-        source = Path(args.game).expanduser().resolve()
-        if not source.exists():
-            raise BuildFailed(f"{source} does not exist")
-        candidates = list(ncch.find_game_files(source))
-        packable = [candidate for candidate in candidates if candidate.kind == "card image"]
-        if not packable:
-            raise BuildFailed("no card image (.3ds/.3dz/.cci) found; CIA packaging is not supported")
-        chosen = packable[0]
-        if len(packable) > 1:
-            progress.say(f"{len(packable)} games found; building the first ({chosen.path.name})")
-        progress.stage_end(state, chosen.path.name)
-        state = progress.stage(2, stages_total, "identify")
-        game_build = identify_game(chosen, state, progress, args)
-        state = progress.stage(3, stages_total, "verify the dump")
-        verify_hash(game_build, state, progress, args)
-        state = progress.stage(4, stages_total, "decrypt a working copy")
-        rom_for_app = game_build.source
-        if any(not part.no_crypto for part in ncch.parse_card_partitions(game_build.source)):
-            rom_for_app = decrypt_stage(game_build, state, progress, args)
-            game_build.working_source = rom_for_app
-            _, game_build.partition, _ = ncch.parse_card_image(rom_for_app)
-        else:
-            progress.stage_end(state, "NoCrypto: no working copy needed")
-        state = progress.stage(5, stages_total, "make the icon")
-        icon_pixels = icon_stage(game_build, state, progress, args)
-        state = progress.stage(6, stages_total, "pack the app")
-        app = pack_stage(game_build, state, progress, args, language=args.language,
-                         rom_for_app=rom_for_app, icon_pixels=icon_pixels)
-        state = progress.stage(7, stages_total, "verify the app")
-        launch_stage(app, state, progress, args)
-    except (ContainerError, DecryptError, BuildFailed, pack_app.PackError,
-            OSError, ValueError, subprocess.SubprocessError) as error:
-        progress.stage_end(state, str(error), ok=False)
+        request = make_request(args)
+        build(request, progress=progress)
+    except BuildError as error:
         progress.say(str(error), error=True)
         if args.progress == "json":
             for line in traceback.format_exc().splitlines():
                 progress.say(line, error=True)
-        return False
-    if args.no_keep_extracted and game_build is not None:
-        shutil.rmtree(game_build.extract, ignore_errors=True)
-    return True
-
-
-def identify_game(chosen: GameFile, state: progress_module.StageState,
-                  progress: progress_module.Progress, args: argparse.Namespace) -> Build:
-    progress.step(state, f"reading {chosen.path.name}")
-    title_id, partition, _media_units = ncch.parse_card_image(chosen.path)
-    if not partition.magic_ok:
-        raise BuildFailed(f"{chosen.path.name}: partition 0 has no NCCH header")
-    progress.count(state, 1, 1, "game")
-    profile = load_profile(title_id)
-    build_dir = chosen.path.parent / build_name(title_id)
-    state_text = "pin" if profile.verified_md5 else "provisional"
-    progress.stage_end(state, f"serial {partition.product_code} · {title_id} · profile {state_text}")
-    return Build(source=chosen.path, title_id=title_id, partition=partition,
-                 profile=profile, build_dir=build_dir)
-
-
-def build_name(title_id: str) -> str:
-    return f"{title_id}_build"
-
-
-def verify_hash(build: Build, state: progress_module.StageState,
-                progress: progress_module.Progress, args: argparse.Namespace) -> None:
-    if not build.profile.verified_md5:
-        progress.stage_end(state, "no pin in the profile: skipped")
-        return
-    if args.no_verify:
-        progress.stage_end(state, "skipped (--no-verify)")
-        return
-    progress.step(state, "md5 full-file check (about a second per GiB)")
-    import hashlib
-
-    digest = hashlib.md5()
-    size = build.source.stat().st_size
-    read_so_far = 0
-    with open(build.source, "rb", buffering=0) as file:
-        while chunk := file.read(0x100_0000):
-            digest.update(chunk)
-            read_so_far += len(chunk)
-            progress.count(state, read_so_far, size, "bytes", est=True)
-    actual = digest.hexdigest()
-    if actual != build.profile.verified_md5:
-        message = (f"MD5 {actual} does not match the profile pin {build.profile.verified_md5}:\n"
-                   f"  {build.source.name}")
-        if args.allow_damaged:
-            progress.say(message + "\n  packed as read (--allow-damaged)", error=True)
-        else:
-            raise BuildFailed(message + "\n  (pass --allow-damaged to pack it anyway)")
-        progress.stage_end(state, "mismatch, packed as read")
-    else:
-        progress.stage_end(state, "MD5 verified against the profile pin")
-
-
-def load_smdh(build: Build) -> Smdh:
-    rom = build.working_source or build.source
-    smdh_raw = ncch.read_exefrs_file(rom, build.partition, "icon")
-    return ncch.parse_smdh(smdh_raw)
-
-
-def decrypt_stage(build: Build, state: progress_module.StageState,
-                  progress: progress_module.Progress, args: argparse.Namespace) -> Path:
-    progress.step(state, "preparing and verifying a clear working copy")
-    out_dir = build.build_dir / "decrypted"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / (build.source.stem + ".decrypted.3ds")
-    total = build.source.stat().st_size
-    progress.count(state, 0, total, "bytes", est=True)
-
-    decrypt_card_image(build.source, out, KeySource(boot9=args.boot9, keys_file=args.keys),
-                       say=lambda message: progress.step(state, message))
-    progress.count(state, total, total, "bytes")
-    progress.stage_end(state, f"{out.name} ({out.stat().st_size:,} bytes)")
-    return out
-
-
-def read_full_header_size(source: Path) -> int:
-    return source.stat().st_size
-
-
-def icon_stage(build: Build, state: progress_module.StageState,
-               progress: progress_module.Progress, args: argparse.Namespace) -> list[tuple[int, int, int, int]] | None:
-    """Decode the SMDH large icon to RGBA (the .icns grows out of it in pack)."""
-    if args.no_icon:
-        progress.stage_end(state, "skipped (--no-icon)")
-        return None
-    progress.step(state, "SMDH icon (48x48, RGB565 CTR layout)")
-    rgba = ncch.icon_rgba(load_smdh(build).large_icon)
-    progress.count(state, 1, 1, "icon")
-    progress.stage_end(state, "decoded")
-    return rgba
-
-
-def pack_stage(build: Build, state: progress_module.StageState, progress: progress_module.Progress,
-               args: argparse.Namespace, language: str, rom_for_app: Path,
-               icon_pixels: list[tuple[int, int, int, int]] | None) -> Path:
-    """The app: name/plist/launcher/sandbox, atomically, with reuse."""
-    progress.step(state, "packing the host and the AOT library")
-    app_output_dir = Path(args.output).expanduser().resolve() if args.output else build.source.parent
-    app_output_dir.mkdir(parents=True, exist_ok=True)
-    smdh = load_smdh(build)
-    lang_index = LANGUAGE_REGION[language]
-    title = smdh.titles.get(lang_index) or smdh.titles.get(1) or next(iter(smdh.titles.values()), ())
-    long_title = (title[1] or title[0]) if title else "Game"
-    app_name = pack_app.app_name_from_smdh(args.app_name or long_title)
-    # \n inside titles (a legal SMDH break) is not legal in a Finder name.
-    app_name = app_name.replace("\n", " - ").strip()
-    app_path = app_output_dir / f"{app_name}.app"
-
-    # the native Rust host: its binary was built in vendors/, its AOT
-    # library came from 3dsrecomp build; both land INSIDE the bundle so
-    # the app stays self-contained
-    zakuro_bin = args.zakuro_bin or (ROOT / "vendors/zakuro/target/release/zakuro")
-    if not zakuro_bin.exists():
-        raise BuildFailed(
-            f"the zakuro host is missing at {zakuro_bin}:\n"
-            "  build it once: cd vendors/zakuro && cargo build --release --locked --workspace 2>&1 | tail -1\n"
-        )
-    recompiled_dylib = Path.home() / "Library/Application Support/3dsrecomp" / f"{build.title_id}.dylib"
-    if not recompiled_dylib.exists():
-        raise BuildFailed(
-            f"the AOT library for {build.title_id} is missing at {recompiled_dylib}:\n"
-            "  build it once (about ten minutes):\n"
-            "    cd vendors/3dsrecomp && cargo build --release && ./target/release/3dsrecomp build <the rom>\n"
-        )
-    host_bin_for_inputs = zakuro_bin  # stamps the SOURCE; the launcher stays self-contained
-    # the hints zakuro writes beside the installed library, seeded into
-    # the bundle so the bundled copy keeps the file next to it; zakuro
-    # never writes a bundled copy's hints (a sealed parent must not
-    # change under it), so the seal holds.
-    hints_path = recompiled_dylib.with_suffix(".hints")
-    extra_files = [
-        (zakuro_bin, app_path / "Contents/MacOS/zakuro-host"),
-        (recompiled_dylib, app_path / "Contents/Resources/game" / f"{build.title_id}.dylib"),
-    ]
-    if hints_path.is_file():
-        extra_files.append((hints_path, app_path / "Contents/Resources/game" / f"{build.title_id}.hints"))
-    host_version = file_stamp(zakuro_bin)
-
-    inputs = pack_app.PackInputs(
-        rom_path=rom_for_app,
-        whom=app_path,
-        host_bin=host_bin_for_inputs,
-        host_version=host_version,
-        toolkit_version=TOOLKIT_VERSION,
-        profile_hash=build.profile.verified_md5,
-        icon_png=None,
-        launcher_args=[],
-        extra_files=extra_files,
-        zakuro_bin=zakuro_bin,
-        recompiled_dylib=recompiled_dylib,
-        scale=args.scale or 3,
-    )
-    # the launcher binds the bundle's own copies: self-contained; the
-    # stamps above stay on the SOURCE binaries (the copy happens in pack)
-    inputs.host_bin_launcher = app_path / "Contents/MacOS/zakuro-host"
-    inputs.recompiled_dylib_launcher = app_path / "Contents/Resources/game" / f"{build.title_id}.dylib"
-    reused = pack_app.pack(
-        app=app_path,
-        app_name=app_name,
-        title_id=build.title_id,
-        version=version_of(build),
-        language=language,
-        inputs=inputs,
-        icon_pixels=icon_pixels,
-        icon_size=(48, 48),
-        say=lambda message: progress.step(state, message),
-    )
-    # The sandbox is the app's user directory: settings.toml and saves live
-    # there, and later builds never touch it.
-    pack_app.sandbox_of(app_path)
-    progress.stage_end(state, f"sandbox ready ({'reused' if reused else 'fresh'}) · host zakuro")
-    # A record of what got packed, next to the logs.
-    (build.logs / "pack.tsv").write_text(
-        "\n".join([
-            f"appid\t{pack_app.app_bundle_id(build.title_id)}",
-            f"app\t{app_path}",
-            f"language\t{language}",
-            f"profile\tpin in dm/games/{build.title_id}/profile.tsv",
-        ]) + "\n"
-    )
-    return app_path
-
-
-def version_of(build: Build) -> str:
-    # Without parsing control NCAs, the card shows no display version; honest 1.0.0.
-    return "1.0.0"
-
-
-def file_stamp(path: Path) -> str:
-
-    stat = path.stat()
-    return f"{stat.st_size}@{stat.st_mtime_ns}"
-
-
-def launch_stage(app: Path, state: progress_module.StageState,
-                 progress: progress_module.Progress, args: argparse.Namespace) -> None:
-    """A smoke run of the packed app: windowless headless for the zakuro host."""
-    if not args.launch:
-        progress.stage_end(state, "not launched (pass --launch to open it)")
-        return
-    import os as _os
-    import shlex
-    launcher_text_file = (app / "Contents/MacOS/ctr-native").read_text()
-    rom = None
-    for line_text in launcher_text_file.splitlines():
-        if line_text.startswith("ROM="):
-            rom = Path(shlex.split(line_text.replace("ROM=", "ROM ", 1))[1])
-            break
-    if rom is None:
-        raise BuildFailed("the launcher carries no ROM path")
-
-    env = dict(_os.environ)
-    env["HOME"] = str(pack_app.sandbox_of(app)["home"])
-    env["DYLD_FALLBACK_LIBRARY_PATH"] = "/opt/homebrew/lib"
-    zakuro_bin = app / "Contents/MacOS/zakuro-host"
-    headless_run = subprocess.run(
-        [str(zakuro_bin), "--headless", "120", "--mute", "--recompiled",
-         str(rom_dylib_path(app)), "--language", args.language, "--scale", str(args.scale), str(rom)],
-        env=env, capture_output=True, text=True, timeout=180,
-    )
-    output = headless_run.stdout + headless_run.stderr
-    progress.count(state, 1, 1, "smoke")
-    if headless_run.returncode == 0 and "Completed after" in output:
-        speed_note = output.strip().splitlines()[-2].strip() if len(output.splitlines()) > 1 else ""
-        subprocess.run(["/usr/bin/open", str(app)], check=True, capture_output=True)
-        progress.stage_end(state, f"headless smoke passed · host zakuro ({speed_note[:60]})")
-        return
-    raise BuildFailed(f"headless smoke failed:\n{output[-800:]}")
-
-
-def rom_dylib_path(app: Path) -> Path:
-    """The bundle's own copy of the game's AOT library (self-contained)."""
-    libraries = list((app / "Contents/Resources/game").glob("*.dylib"))
-    if len(libraries) != 1:
-        raise BuildFailed("the bundle must contain exactly one AOT library")
-    return libraries[0]
+        return 1
+    total = time.monotonic() - started
+    progress.say(f"build finished in {int(total)}s")
+    if args.no_keep_directories and request.game.is_dir():
+        for folder in sorted(request.game.parent.glob("*_build")):
+            shutil.rmtree(folder, ignore_errors=True)
+    return 0
 
 
 if __name__ == "__main__":
