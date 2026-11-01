@@ -1,5 +1,17 @@
 # Refactor del pipeline común de ctr-native
 
+## Estado (2026-10-31) — ✅ ejecutado (tres entregas, merge a master)
+
+Branch `refactor/pipeline` (commits `7cb83b0` motor+AOT, `9a029b7`
+validación-como-datos + runtime centralizado), merged a master por
+fast-forward. Gates por entrega: 68 tests OK, ruff limpio, pyright 0
+errores, 5 escenarios gráficos sintéticos verdes, y el flujo real
+re-empacado en verde (ALBW reuso de llave + firma). Losdos pendientes
+que el plan dejaba explícitos: la integración macOS re-utilizable con
+`3dsrecomp real + ROM manufacturada` vive en `dm/tests/t_build.py`
+(skip cuando el compilador no está construido), y CI sigue sin
+necesitar datos de juego ni claves.
+
 ## 1. Objetivo y alcance
 
 Permitir que **todos los juegos recorran el mismo flujo**, desde la ROM hasta la app validada. Añadir un título requerirá sus datos y pruebas de compatibilidad, sin modificar la orquestación.
