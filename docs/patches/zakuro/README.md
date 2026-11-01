@@ -40,3 +40,4 @@ feature guards for non-Metal builds and the exact base required by 0019.
 Estado 2026-11-01: serie 0001–0019 con 0018a intercalado, reproducida desde
 upstream y comprobada contra vendors.lock.json en el cierre P1 (725bb82).
 Los P2 de Metal siguen abiertos en el plan del pipeline.
+| `0021-metal-m11-a1-hardware-rack-translates.patch` | **M1.1 A1**: el rack completo del raster hardware (shade/vert/frag×2, transfer, depth, upright×2) pasa por naga `msl-out` desde los MISMOS fuentes GLSL — el device compila **8/8** (23 ms de traducción); `compile_msl_stage` generaliza a cualquier stage+defines; `prepare()` cierra las 3 brechas de naga (samplers separados, spec-consts, push_constants a binding 24) | local (Metal) |
