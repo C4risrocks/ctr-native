@@ -93,6 +93,7 @@ class BuildResult:
     reused_package: bool
     aot: AotArtifact
     smoke: SmokeResult | None
+    build_dir: Path
 
 
 class BuildError(Exception):

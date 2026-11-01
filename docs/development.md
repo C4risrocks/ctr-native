@@ -140,3 +140,12 @@ for the Homebrew Vulkan loader. Do not use `DYLD_LIBRARY_PATH` for this:
 it overrides system dependencies and makes Apple's ImageIO PNG decoder crash
 with SIGBUS when AppKit loads menu icons. The native packaging tests decode a
 manufactured PNG through ImageIO inside the generated launcher to guard this.
+
+### Safe post-build cleanup
+
+`--no-keep-directories` removes only `extract` within the selected title's build
+folder, for both single-file and directory inputs. Linked paths are refused.
+Prepared ROMs, AOT caches, logs, apps and player sandboxes remain in place.
+After decryption the pipeline reparses the prepared card and uses its current
+partition flags for metadata; a changed title or remaining encryption fails
+preparation before AOT or packaging.

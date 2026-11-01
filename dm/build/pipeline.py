@@ -16,7 +16,7 @@ package; one edition never silently replaces another.
 from __future__ import annotations
 
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 from collections.abc import Callable
@@ -112,7 +112,7 @@ class Pipeline:
             self.stage(1, "discover")
             prepared = self.discover(self._open_stage)
             self.verify_stage(prepared)
-            self.prepare_stage(prepared)
+            prepared = self.prepare_stage(prepared)
             zakuro_bin = self.resolve_zakuro()
             zakuro_stamp = file_stamp(zakuro_bin)
             aot = self.aot_stage(prepared, zakuro_stamp)
@@ -127,6 +127,7 @@ class Pipeline:
                 reused_package=published["reused"],
                 aot=aot,
                 smoke=smoke,
+                build_dir=prepared.build_dir,
             )
         except BuildError as error:
             if self._open_stage is not None:
@@ -202,14 +203,12 @@ class Pipeline:
             self.progress.stage_end(stage3, "MD5 verified against the profile pin")
 
     # 4 -------------------------------------------------------------------------
-    def prepare_stage(self, prepared: PreparedGame) -> None:
+    def prepare_stage(self, prepared: PreparedGame) -> PreparedGame:
         stage4 = self.stage(4, "prepare a working copy")
         opaque = any(not part.no_crypto for part in ncch.parse_card_partitions(prepared.source))
         if not opaque:
             self.progress.stage_end(stage4, "NoCrypto partitions: the original runs as is")
-            object.__setattr__(prepared, "working_source", prepared.source)
-            object.__setattr__(prepared, "prepared", False)
-            return
+            return prepared
         out_dir = prepared.build_dir / "decrypted"
         out_dir.mkdir(parents=True, exist_ok=True)
         out = out_dir / (prepared.source.stem + ".prepared.3ds")
@@ -221,10 +220,13 @@ class Pipeline:
                                say=lambda message: self.progress.step(stage4, message))
         except (ContainerError, Exception) as error:
             raise BuildError("prepare", f"the working copy failed: {error}") from error
+        title_id, partition, _ = ncch.parse_card_image(out)
+        if title_id != prepared.title_id or any(not part.no_crypto for part in ncch.parse_card_partitions(out)):
+            raise BuildError("prepare", "prepared copy changed title or retains encrypted partitions")
         self.progress.count(stage4, total, total, "bytes")
         self.progress.stage_end(stage4, f"{out.name} ({out.stat().st_size:,} bytes)")
-        object.__setattr__(prepared, "working_source", out)
-        object.__setattr__(prepared, "prepared", True)
+        return replace(prepared, working_source=out, prepared=True,
+                       partition=partition, partition_flags=partition.flag_byte)
 
     # 5 -------------------------------------------------------------------------
     def aot_stage(self, prepared: PreparedGame, zakuro_stamp: str) -> AotArtifact:

@@ -36,7 +36,6 @@ All options:
 from __future__ import annotations
 
 import argparse
-import shutil
 import sys
 import time
 import traceback
@@ -81,7 +80,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--rebuild-aot", action="store_true")
     parser.add_argument("--progress", default="auto",
                         choices=("json", "bar", "lines", "off", "auto"))
-    parser.add_argument("--no-keep-directories", action="store_true")
+    parser.add_argument("--no-keep-directories", action="store_true",
+                        help="delete only the selected build extraction directory after success")
     parser.add_argument("--launch", action="store_true")
     return parser.parse_args(argv)
 
@@ -113,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     progress = progress_module.Progress(args.progress)
     try:
         request = make_request(args)
-        build(request, progress=progress)
+        result = build(request, progress=progress)
     except BuildError as error:
         progress.say(str(error), error=True)
         if args.progress == "json":
@@ -122,9 +122,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     total = time.monotonic() - started
     progress.say(f"build finished in {int(total)}s")
-    if args.no_keep_directories and request.game.is_dir():
-        for folder in sorted(request.game.parent.glob("*_build")):
-            shutil.rmtree(folder, ignore_errors=True)
+    if args.no_keep_directories:
+        from dm.tools.user_data import safe_path, remove_cache
+        extract = result.build_dir / "extract"
+        if not safe_path(extract):
+            progress.say("refusing linked extraction directory", error=True)
+            return 1
+        if extract.is_dir():
+            remove_cache(extract)
     return 0
 
 

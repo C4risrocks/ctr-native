@@ -13,6 +13,47 @@ from scripts import build_app_from_3ds as builder
 
 
 class TestBuilder(unittest.TestCase):
+    def test_cleanup_is_confined_to_current_extract(self):
+        from types import SimpleNamespace
+        for directory_input in (False, True):
+            with self.subTest(directory_input=directory_input), TemporaryDirectory() as folder:
+                root = Path(folder)
+                inputs = root / "roms"
+                inputs.mkdir()
+                rom = inputs / "synthetic.3ds"
+                rom.write_bytes(b"synthetic")
+                build_dir = inputs / "current_build"
+                extract = build_dir / "extract"
+                extract.mkdir(parents=True)
+                (extract / "temporary").write_text("temporary")
+                protected = [root / "unrelated_build/keep", build_dir / "decrypted/rom",
+                             build_dir / "aot/library", inputs / "Game.app.ctr-native/save"]
+                for path in protected:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("keep")
+                result = SimpleNamespace(build_dir=build_dir)
+                with patch.object(builder, "build", return_value=result), contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(builder.main([str(inputs if directory_input else rom),
+                                                  "--no-keep-directories"]), 0)
+                self.assertFalse(extract.exists())
+                self.assertTrue(all(path.read_text() == "keep" for path in protected))
+
+    def test_cleanup_refuses_linked_extract(self):
+        from types import SimpleNamespace
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            build_dir = root / "current_build"
+            build_dir.mkdir()
+            outside = root / "outside"
+            outside.mkdir()
+            sentinel = outside / "save"
+            sentinel.write_text("keep")
+            (build_dir / "extract").symlink_to(outside, target_is_directory=True)
+            with patch.object(builder, "build", return_value=SimpleNamespace(build_dir=build_dir)), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(builder.main([str(root), "--no-keep-directories"]), 1)
+            self.assertEqual(sentinel.read_text(), "keep")
+
     def test_scale_must_be_positive(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             builder.parse_args(['synthetic.3ds', '--scale', '0'])

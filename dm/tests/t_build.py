@@ -157,6 +157,47 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue(result.app.exists())
             self.assertTrue((result.sandbox_home.parent.name).endswith(".ctr-native"))
 
+    def test_primary_decryption_refreshes_metadata(self):
+        from dm.build.pipeline import Pipeline
+        from dm.tools import ncch
+        from dm.tests.fixtures import encrypted_partition
+        for fixed in (True, False):
+            with self.subTest(fixed=fixed), TemporaryDirectory() as folder:
+                root = Path(folder)
+                encrypted, _ = encrypted_partition(fixed=fixed)
+                rom = build_card_image(encrypted, root / "synthetic.3ds")
+                original = rom.read_bytes()
+                keys = root / "synthetic.tsv"
+                keys.write_text("2c=" + bytes(range(16)).hex() + "\n25=" + bytes(range(32, 48)).hex())
+                pipeline = Pipeline(request_for(rom, root, keys=keys), _quiet())
+                initial = pipeline.discover(pipeline.stage(1, "discover"))
+                prepared = pipeline.prepare_stage(initial)
+                self.assertFalse(initial.partition.no_crypto)
+                self.assertTrue(prepared.partition.no_crypto)
+                self.assertEqual(prepared.title_id, initial.title_id)
+                self.assertTrue(ncch.parse_smdh(ncch.read_exefrs_file(
+                    prepared.working_source, prepared.partition, "icon")).titles)
+                self.assertEqual(rom.read_bytes(), original)
+
+    def test_preparation_rejects_changed_title(self):
+        from dm.build.models import BuildError
+        from dm.build.pipeline import Pipeline
+        from dm.tests.fixtures import encrypted_partition
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            encrypted, _ = encrypted_partition(fixed=True)
+            rom = build_card_image(encrypted, root / "synthetic.3ds")
+            original = rom.read_bytes()
+            pipeline = Pipeline(request_for(rom, root), _quiet())
+            initial = pipeline.discover(pipeline.stage(1, "discover"))
+            def different_title(source, destination, keys, say):
+                return build_card_image(build_cxi_partition(program_id=0x0004000000125600), destination)
+            with patch("dm.build.pipeline.decrypt_card_image", side_effect=different_title), \
+                    self.assertRaises(BuildError):
+                pipeline.prepare_stage(initial)
+            self.assertEqual(rom.read_bytes(), original)
+            self.assertEqual(initial.working_source.resolve(), rom.resolve())
+
     def test_real_3dsrecomp_integration_when_available(self):
         root = Path(__file__).resolve().parent.parent
         compiler = root / "vendors/3dsrecomp/target/release/3dsrecomp"

@@ -1,6 +1,6 @@
 # Refactor del pipeline común de ctr-native
 
-## Estado (2026-10-31) — ✅ ejecutado (tres entregas, merge a master)
+## Estado — implementación inicial realizada; auditoría con hallazgos abiertos
 
 Branch `refactor/pipeline` (commits `7cb83b0` motor+AOT, `9a029b7`
 validación-como-datos + runtime centralizado), merged a master por
@@ -105,3 +105,25 @@ Pruebas requeridas:
 - Añadir una integración macOS con 3dsrecomp real y una ROM manufacturada; CI seguirá sin necesitar datos de juegos ni claves.
 
 El refactor estará aceptado cuando un título nuevo pueda recorrer el flujo completo sin añadir condiciones específicas a la CLI o al motor común.
+
+## Auditoría 2026-11-01 sobre be10b73
+
+| Hallazgo | Prioridad | Estado |
+|---|---|---|
+| 1. Limpieza de builds ajenos | P1 | Corregido: solo extract del build seleccionado |
+| 2. Metadatos antiguos tras descifrar | P1 | Corregido: nuevo PreparedGame con partición analizada |
+| 3. Selección AOT sin validar contenido/procedencia | P1 | Pendiente |
+| 4. Fork irreproducible: parche 0019 y lock | P1 | Pendiente |
+| 5. Huella AOT incompleta | P2 | Pendiente |
+| 6. Errores y cierre de etapas JSON | P2 | Pendiente |
+| 7. Sincronización de texturas Metal | P2 | Pendiente |
+| 8. Canal Metal bloqueante | P2 | Pendiente |
+| 9. Integración real 3dsrecomp omitida | P2 | Pendiente |
+
+Esta entrega se limita a P1-1 y P1-2. Conserva ROM original, preparada,
+caché AOT, logs y sandbox. La preparación devuelve un estado nuevo y valida
+que la copia conserve título y no retenga particiones cifradas.
+
+Validación: 72 pruebas Python (una omitida), 2.000 mutaciones sintéticas, Ruff
+y Pyright correctos. La suite incluye
+empaquetado nativo macOS. El bootstrap continúa pendiente por P1-4.
