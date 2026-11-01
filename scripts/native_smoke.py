@@ -21,6 +21,8 @@ CASES = (
     ('shared-window-cycle', ['--split', 'on'], {'ZAKURO_TEST_WINDOW_CYCLE': '1'}, True, True),
     ('vulkan-to-gl', ['--split', 'on'], {'ZAKURO_TEST_COMPANION_GL': '1'}, False, True),
     ('two-gl-contexts', ['--split', 'on', '--renderer', 'gl'], {}, False, False),
+    ('single-metal', ['--renderer', 'metal'], {}, False, False),
+    ('shared-metal', ['--split', 'on', '--renderer', 'metal'], {}, False, False),
 )
 
 
