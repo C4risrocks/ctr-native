@@ -77,8 +77,9 @@ Hallazgos medidos (cierran el misterio del "vertices shaded on the CPU"):
    Cargo.toml pero no lleva el archivo), y los parches de
    `docs/patches/zakuro/` como serie PR.
 
-## Fila M3 pendiente — Metal present (M1.0), kpi del jugador
+## La doble cuenta del M3 (2026-11-01) — Metal present vs Vulkan, playing-session
 
 | Sesión | Compuesto | kpi |
 |---|---|---|
 | MM3D metal+software, present en el hilo principal (M1.0 real) | raster CPU + texturas Metal + `presentDrawable` | 6290 frames/244 s, **avg 25.8 fps**, min 33.6, dry 23 (5.66/min), 0% gpu-shaded · el `sample` mostró 85% del loop en `nextDrawable`: M1.0.5 desacopla el present |
+| La misma partida por Vulkan (lado Vulkan de la cuenta, 17 min) | raster hardware (depth 32f), present vulkan FIFO, screens directas del GPU | 58517 frames/1008 s, **avg 58.1 fps**, min 7.9 (arranque), **dry 12 = 0.71/min — el mejor registro de la serie**, 0% gpu-shaded (0 gpu, 2.75M cpu) |
