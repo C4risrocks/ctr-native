@@ -1,0 +1,38 @@
+From 7adc394eae9fec262cf717dd0276210f51c9350d Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 04:02:30 -0600
+Subject: [PATCH] app: the Metal spike warns when asked outside the test
+ pattern
+
+a plain --renderer metal run gets a log warning saying the spike's
+picture is on screen and the game's screens still come from the other
+backends.
+---
+ crates/zakuro/src/lib.rs | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/crates/zakuro/src/lib.rs b/crates/zakuro/src/lib.rs
+index 3b30693..fd8fc61 100644
+--- a/crates/zakuro/src/lib.rs
++++ b/crates/zakuro/src/lib.rs
+@@ -156,6 +156,17 @@ pub fn run_with(linked: Option<Linked>, overlay: Option<Box<dyn GameOverlay>>) {
+         return;
+     }
+ 
++    // the Metal backend is an M0 spike: it presents the spike's picture and
++    // not the game's screens yet, so a plain run deserves the warning
++    if matches!(app.options.renderer, Some(zakuro_gpu::RendererKind::Metal))
++        && !app.options.test_pattern
++    {
++        log::warn!(
++            "the Metal backend is an M0 spike: it only presents the spike picture; \
++             the game's screens still come from the Vulkan, OpenGL or software paths"
++        );
++    }
++
+     if let Some(folder) = app.settings.games.clone() {
+         app.library.scan(&folder);
+     }
+-- 
+2.56.0
+
