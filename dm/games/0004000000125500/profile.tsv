@@ -1,0 +1,4 @@
+# Profile of The Legend of Zelda: Majora's Mask 3D (USA), CTR-P-AJRE.
+# The runtime reads its own settings from the sandbox's settings.toml; this
+# table only pins the dump's verification hash. Add games by adding folders.
+verified_md5=070077e99b3ab90cbfc8c2e6161c17d7

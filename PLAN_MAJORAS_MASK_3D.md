@@ -1,5 +1,22 @@
 # Majora’s Mask 3D: compilación y prueba jugable en macOS
 
+## Estado (2026-10-31)
+
+**Ejecutado por la vía USA Decrypted** (edición `0004000000125500` CTR-P-AJRE,
+copia en claras flags `NoCrypto`/`FixedKey` presente en la raíz del repo; sin
+llaves en el flujo del build). Pendiente de confirmación: la prueba jugable
+interactiva (español, menús repetidos sin fallo ImageIO, guardado).
+
+- Perfil: `dm/games/0004000000125500/profile.tsv` con el pin
+  `verified_md5=070077e99b3ab90cbfc8c2e6161c17d7` (copia que corre), notas en
+  su `README.md` (incluye la procedencia del recibido EUR cifrado:
+  md5 `4a491c638cf770278a392ebd677f6bef`, sha256 `8f9a53b7…`).
+- AOT: 248/248 funciones (144.7 s), `~/Library/Application Support/
+  3dsrecomp/0004000000125500.dylib`.
+- Empaquetado: `The Legend of Zelda - Majoras Mask 3D.app` (humo headless
+  verde, firma ad-hoc verificada, sandbox hermana propia); el launcher apunta
+  a la copia descifrada en `0004000000125500_build/decrypted/`.
+
 ## Objetivo y requisito previo
 
 Generar `The Legend of Zelda - Majoras Mask 3D.app`, en español, y validar una sesión con controles, audio y persistencia de partida.
@@ -41,7 +58,10 @@ python3 scripts/build_app_from_3ds.py "$ROM_DESCIFRADA" \
   --progress lines --launch
 ```
 
-Verificar firma, icono, biblioteca incluida y rutas del launcher. Mantener la corrección de ImageIO mediante `DYLD_FALLBACK_LIBRARY_PATH`.
+Verificar firma, icono, biblioteca incluida y rutas del launcher. Mantener las
+correciones de ImageIO ya en master (`c346dbd`: el launcher ya no ensombrece
+los codecs del sistema; y el re-encode del icono vía `sips` en el stage de
+icono).
 
 La app dependerá de la ROM externa en su ubicación definitiva. Guardados y configuración pertenecerán exclusivamente al sandbox de Majora’s Mask.
 
