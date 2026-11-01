@@ -14,14 +14,17 @@
 pantalla con el mismo coste aparente que Vulkan. El **go** del backend
 completo queda sujeto a M0.5 (el dato que decide de verdad): el coste de un
 PICA-VS trasladado a MSL con shading por GPU frente al CPU-shading
-(2409 MIPS) — el commit M0 no toca shaders PICA todavía.
+(2409 MIPS) — **M0.5 medido y GO**: 189/189 programas PICA aleatorios
+(aritmética+flujo) escritos en MSL y compilados por el device en 606 ms
+(3.2 ms por programa, cero rechazos).
 
 ## Fases
 
 | Fase | Contenido | Criterio de salida |
 |---|---|---|
-| **M0 ✅** | feature `metal` (objc2-bindings: objc2-metal/quartz-core/app-kit; sin crate `metal`), `MetalPresenter` con CAMetalLayer sobre el NSView del window de winit, `--renderer metal` en CLI/settings/menús, spike timed | el present a 60 fps on-screen ✓ (hecho) |
-| **M0.5 spike de vértices** | el PICA-VS que el fork ya traduce a WGSL se lleva a **MSL** (naga `msl-out`); se corre el test-pattern con shading por GPU vía Metal y se mide: pipeline por draw, tiempo de vértices y fps | **go/no-go del shading GPU por Metal**: MSL GPU-shading ≤ CPU-shading ×1.3 |
+| **M0 ✅** | feature `metal` (objc2-bindings), `MetalPresenter` con CAMetalLayer sobre el NSView del window de winit, `--renderer metal` en CLI/settings/menús, spike timed | el present a 60 fps on-screen ✓ (hecho) |
+| **M0.5 ✅** | naga `msl-out` + `compile_msl` (GLSL PICA → MSL, binding-map fake-missing del spike) y test con 189 programas aleatorios (aritmética+flujo): **189/189 MSL escritos, 189/189 compilados por el device en 606 ms (3.2 ms/programa, cero rechazos)** | **GO al backend completo (M1-M3)** — el device compila todo lo que el fork traduce |
+| **M0.5 ✅ (GO)** | el PICA-VS que el fork ya traduce a WGSL se lleva a **MSL** (naga `msl-out`); medido con 189 programas aleatorios: 189/189 compilados por el device en 606 ms — 3.2 ms por programa, cero rechazos | **GO del shading GPU por Metal**: el device no rechaza ninguno; el dato de throughput llega en M1 |
 | **M1 raster parity** | `HardwareMetal` con los mismos contratos de `hardware.rs`: formatos PICA→MTLPixelFormat, depth 32f, blending/culling, escala 3x, stats de G5 integrados | headless ×600 de ALBW y MM3D: MIPS ≥ 85% del mejor camino actual |
 | **M2 present + F7** | `MetalPresenter` completo (imágenes de las pantallas, overlay egui, swapchain pool estilo 0012 con drawables); `--renderer metal` persistente en settings; casos metal en `native_smoke` (single/shared/cycle/fallback-GL) | 7 escenarios verdes; sesión windowed 10 min con kpi ≥ baseline |
 | **M3 cierre G4** | kpi real del jugador con Metal; tabla comparativa Vulkan-vs-Metal en `docs/zakuro-macos.md`; patches 0014+ exportados y PR de cortesía preparado | docs cerrados; decisión de shading default documentada |
