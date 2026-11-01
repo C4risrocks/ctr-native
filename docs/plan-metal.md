@@ -1,8 +1,6 @@
 # Plan Metal (G4→M): backend Metal directo para ctr-native
 
-## Estado (2026-11-01) — M0 spike completado
-
-**M0 ✅ ejecutado** (branch `feat/metal-m0`, patch del fork `0014`):
+## Estado (2026-11-01) — M0 ✅ **ejecutado y merged a master**
 
 | Dato | Valor |
 |---|---|
@@ -10,6 +8,7 @@
 | Present loop por `CAMetalLayer` (drawable→render→commit→present) | **90 frames / 1.481 s = 60.1 fps** on-screen |
 | Comparación Vulkan mismo test (`--test-pattern --test-frames 90`) | 57–61 fps (native_smoke, 5 escenarios) — **empate** |
 | Fallos/panics | 0 · sin mensajes de validación |
+| Seguridad añadida | fuera del test-pattern, `--renderer metal` marca en el log que es el spike (patch 0015) |
 
 **Conclusión M0:** la capa de presentación Metal funciona al ritmo de
 pantalla con el mismo coste aparente que Vulkan. El **go** del backend
