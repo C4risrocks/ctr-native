@@ -37,6 +37,39 @@ PICA-VS trasladado a MSL con shading por GPU frente al CPU-shading
 | **M1.1 ◐ A1–A3c ✅ — A4 abierto** | **A1 ✅ (0021)**: el rack de 8 shaders → MSL por naga (device compila 8/8) · **A2 ✅ (0022)**: formatos/pipelines (hallazgo: Apple silicon **no renderiza D24S8** — el raster Metal va por el float twin **D32F_S8**) · **A3a ✅ (0023)**: la cadena de ejecución corriendo hasta píxeles con asserts por cuadrante · **A3b ✅ (0024)**: `raster.frag`+`raster.vert` reales con las uniformes PICA del `Draw` block (DYNAMIC=1 tev/misc/units leídas del std140), combiners verificados por píxel · **A3c ✅ (0025)**: los compute shaders (transfer/depth/upright/upright_image) con su mapa de bindings verbatim y su ejecución comprobada · **A4 — el executor ✅ (0028)**: `HardwareMetal::draw_placed` corre un draw end-to-end (ring staging + pipeline per key + indexed draw + pass con depth) con los píxeles verificados. **A4 abierto — el Ring ✅ (0026) + el staging de uniformes ✅ (0027) + el TexturePool ✅ (0029)** — la capa decode del CPU es gratis para el port (el `TextureCache` compartido). **Queda del A4**: el `PlacedDraw` conectado al `Resources.hardware` del app (el slot con el twin del state machine del `hardware.rs`: surfaces/surfaces-loads por la memoria guest + los display transfers del `Transfer` GSP), el smoke metal-hardware y el headless ×600: MIPS ≥ 85% del mejor camino. **La jugabilidad con raster de hardware sobre Metal YA corre** por la vía Vulkan→MoltenVK (la misma Metal deuda — 58.1 fps en el kpi del 2026-11-01); el Metal-native completo queda como el proyecto multi-sesión que es |
 | **M2.1 ⏳ desarrollo abierto** | overlay egui dibujado bajo Metal | el overlay se dibuja sobre las pantallas en la misma ventana |
 
+## La spec del A4 restante (el twin de `hardware.rs` — la pieza final de M1.1)
+
+Las funciones del `hardware.rs` (las líneas de origen) que el Metal twin
+lleva a `raster/metal_hardware.rs`, en el orden de dependencia:
+
+1. **`Surface` (línea 298)** — el render target por (addr, kind, w, h):
+   textura Managed + las filas bottom-first del guest. Su par Metal
+   sincroniza con `TexturePool` (0029) para las texels decodificadas y
+   con los compute shaders (0025) para las filas que el GPU escribe.
+2. **`surface_rows` (2375) + `taller` (2367)** — la carga de las filas
+   del guest a la textura (el decode Morton del formato via `transfer.comp`
+   o el CPU compartido), y el alto extendido cuando dos pantallas
+   comparten memoria.
+3. **`begin` (2014) / `end_rendering` (2198) / `submit` (4980) /
+   `retire_finished` (5116)** — el ciclo del batch: el ring (0026) toma
+   los spans, el command buffer se arma y se entrega, los frames en
+   vuelo (IN_FLIGHT=3) se retiran por fence.
+4. **`collect` (3356) + `mark` (2083)** — el orden de los draws y los
+   marcadores de trabajo (Work::Color/Depth/Other) que deciden qué
+   barreras pasan antes de leer.
+5. **`sync_where` (4068) + `sync_depth`** — la vuelta al guest (los
+   writebacks), el camino que el present del CPU lee.
+6. **El slot final**: `Resources.hardware` (raster.rs 1544) crece su
+   variante `cfg(feature = "metal")` con `Option<HardwareMetal>`, y el
+   despacho de `raster::rasterize` llama `HardwareMetal::draw_placed`
+   (0028) con los `PlacedDraw` armados de las texels del `TextureCache`
+   (0029) y las uniformes del block-writer del `hardware.rs` (3724).
+
+Cada paso con su test de píxel como A3a/A3b, y el cierre con el
+headless ×600 (MIPS ≥ 85% del mejor camino). Mientras tanto, la
+jugabilidad de raster-hardware-sobre-Metal corre por Vulkan→MoltenVK
+(58.1 fps).
+
 ## Riesgos (los mismos del informe G4, actualizados)
 
 1. **objc2 churn** — lock por `vendors.lock.json` (ya existe el mecanismo).
