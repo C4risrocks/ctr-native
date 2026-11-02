@@ -206,3 +206,21 @@ HardwareMetal M1.1, overlay M2.1 y automatización de higiene siguen pendientes.
 Validación S4 local: 80 pruebas Python, sin omisiones, con
 CTR_REQUIRE_REAL_AOT=1; Ruff y Pyright correctos, 49 enlaces locales válidos
 y git diff --check limpio. El resultado remoto de CI se verifica por separado.
+
+### M1.1 A4 — conservación entre draws (0037)
+
+El executor recibe `PlacedDraw.clear`: inicialización explícita o carga del
+color y profundidad existentes. Antes borraba ambos en cada draw. La prueba
+GPU emite dos draws separados y verifica que el segundo conserva el primero.
+Suite Metal completa correcta (rustc/cargo 1.99.1 mediante alias stable local);
+la instalación nombrada 1.99.1 requirió reparación de rustup y su proxy cargo
+seguía sin funcionar. La versión efectiva se comprobó explícitamente.
+
+Este incremento no cierra M1.1: siguen pendientes despacho real, bindings
+completos, batching, presentación compartida y comparación de rendimiento.
+`with_hosts` no tiene llamadas en el código actual: el slot de Resources
+por sí solo no activa el backend. Vulkan continúa como predeterminado.
+
+Validación 0037: 483 pruebas default y 495 Metal, cero fallos y tres
+ignoradas habituales por suite; bootstrap local y desde clones nuevos correcto.
+No se ejecutaron benchmarks de juegos ni se acredita cierre de M1.1.

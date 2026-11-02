@@ -54,7 +54,8 @@ como otro parche numerado y actualiza su hash de árbol en el lock.
 | `0035-metal-uniform-block-builder.patch` | **M1.1 A4**: `draw_uniform_block` — los words del Draw block desde los registers (los 6 stage pairs, el update/color/alpha-test/texture-config, las units, el depth flags) — la identical shape que el hardware.rs llena | local (Metal) |
 
 | `0036-tests-shared-transfer.patch` | Tests actualizados al tipo Transfer compartido de raster.rs | incluido en el lock |
+| `0037-metal-preserve-draw-attachments.patch` | **M1.1 A4**: carga explícita de color/profundidad entre draws; prueba GPU de dos draws preservando píxeles | implementado; M1.1 abierto |
 
-Estado 2026-11-02 (`dev`, d3225d2): serie hasta 0036, con 0018a intercalado;
+Estado 2026-11-02 (`dev`, d3225d2): serie hasta 0037, con 0018a intercalado;
 bootstrap local y desde clones nuevos verificados contra vendors.lock.json.
 P2-7/P2-8 corregidos en dev; HardwareMetal completo y overlay siguen pendientes.
