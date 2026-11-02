@@ -224,3 +224,22 @@ por sí solo no activa el backend. Vulkan continúa como predeterminado.
 Validación 0037: 483 pruebas default y 495 Metal, cero fallos y tres
 ignoradas habituales por suite; bootstrap local y desde clones nuevos correcto.
 No se ejecutaron benchmarks de juegos ni se acredita cierre de M1.1.
+
+### M1.1 A4 — estado del pipeline (0038)
+
+El PSO respeta las máscaras RGBA PICA mediante conversión al orden de bits
+Metal. Los passes sin profundidad usan formato Invalid en ambos attachments
+opcionales. El executor rechaza vértices Interpreted y discrepancias entre
+key.depth y el attachment antes de reservar staging o enviar trabajo al GPU.
+
+Regresión reproducida: escribir solo rojo modificaba también verde/azul.
+La prueba GPU ahora comprueba canales preservados, máscara cero y pass sin
+profundidad; otra prueba recorre las 16 combinaciones RGBA. Suite Metal:
+496 pruebas correctas, tres ignoradas habituales.
+
+Siguen pendientes bindings completos de texturas/samplers, depth/stencil y
+blend efectivos, despacho real, batching y validación de paridad/rendimiento.
+Este incremento no cierra M1.1 ni M2.1. Vulkan continúa por defecto.
+
+Validación 0038: 483 pruebas sin Metal y 496 con Metal correctas; bootstrap
+local y desde clones nuevos verificado; 49 enlaces locales válidos y diff limpio.

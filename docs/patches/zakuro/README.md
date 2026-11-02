@@ -55,7 +55,8 @@ como otro parche numerado y actualiza su hash de árbol en el lock.
 
 | `0036-tests-shared-transfer.patch` | Tests actualizados al tipo Transfer compartido de raster.rs | incluido en el lock |
 | `0037-metal-preserve-draw-attachments.patch` | **M1.1 A4**: carga explícita de color/profundidad entre draws; prueba GPU de dos draws preservando píxeles | implementado; M1.1 abierto |
+| `0038-metal-color-mask-and-depth-contract.patch` | **M1.1 A4**: máscaras RGBA, passes sin profundidad y rechazo de estados incompatibles; prueba GPU | implementado; M1.1 abierto |
 
-Estado 2026-11-02 (`dev`, d3225d2): serie hasta 0037, con 0018a intercalado;
+Estado 2026-11-02 (`dev`, d3225d2): serie hasta 0038, con 0018a intercalado;
 bootstrap local y desde clones nuevos verificados contra vendors.lock.json.
 P2-7/P2-8 corregidos en dev; HardwareMetal completo y overlay siguen pendientes.
