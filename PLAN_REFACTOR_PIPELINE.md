@@ -1,6 +1,6 @@
 # Refactor del pipeline común de ctr-native
 
-## Estado — implementación inicial realizada; auditoría con hallazgos abiertos
+## Estado — auditoría corregida; integración Metal en curso
 
 La implementación inicial se integró desde `refactor/pipeline` (`7cb83b0`,
 `9a029b7`). La auditoría posterior identificó nueve hallazgos: cuatro P1
@@ -275,7 +275,7 @@ bootstrap local y desde clones nuevos correcto; diff sin errores de espacios.
 |---|---|---|
 | H1 | Estado común: uniformes std140 de 408 words, tablas y Filtering; regresiones Vulkan/Metal | Implementado en 0040 |
 | H2 | Texturas/mipmaps y samplers desde PICA, identidad propietaria e invalidación | Implementado en 0041; casos no soportados rechazados |
-| H3 | Especialización de fragmentos, depth/stencil, blend, viewport/scissor y pipelines cacheados | Pendiente |
+| H3 | Especialización de fragmentos, depth/stencil, blend, viewport/scissor y pipelines cacheados | Implementado en 0042; validación GPU correcta |
 | H4 | Superficies coherentes, fills/transfers, sync CPU, solapamientos y savestates | Pendiente |
 | H5 | Selección explícita del backend y despacho real desde carga del título y rasterize | Pendiente |
 | H6 | Contexto compartido, batching y presentación directa a ambas ventanas | Pendiente |
@@ -311,3 +311,31 @@ rechazo explícito antes de subir: su fallback coherente se conecta en H4/H5.
 El color de borde sigue siendo responsabilidad del shader común.
 Prueba aislada de H2: mip cargado y leído, identidad cacheada, propiedad Arc,
 longitud inválida y bias no soportado correctos. H3 amplía la prueba de muestreo.
+
+### H3 — estado PICA del pipeline (0042)
+
+RasterState::from_pica interpreta máscara, blend, operaciones lógicas, depth,
+stencil y especialización de fragmentos. Las variantes activan iluminación,
+procedural y WRITES_DEPTH. El bloque de uniformes/tablas compartido de H1
+continúa como fuente de datos; H2 aporta los bindings desde BoundTexture.
+El executor aplica viewport/scissor validados, blend constante, depth/stencil
+y carga/store del attachment stencil, con cachés de PSO y depth/stencil.
+La referencia stencil es dinámica y no multiplica la clave del pipeline.
+
+Pruebas GPU integradas: nearest/linear, repeat/mirror/border, selección mip,
+niebla, blend constante, scissor, comparaciones de profundidad, stencil Equal
+y Replace, iluminación ambiental, LUT procedural, alpha Never y profundidad
+w escrita desde fragmento; además se verifica reutilización de ambas cachés.
+
+Los modos no representables se rechazan antes del draw: operaciones lógicas
+distintas de Copy/Noop, bias LOD no cero, fuentes GPU y texture packs. Esto
+prepara el fallback; no se declara conectado antes de H4/H5. No se ejecutó
+un juego con este raster ni se midió el presupuesto de rendimiento.
+
+Validación H2/H3: 484 pruebas default y 499 Metal correctas (tres ignoradas
+habituales por suite), prueba GPU repetida sobre el árbol final y compilación
+metal-only de zakuro-gpu sin Vulkan correcta. H4–H7 y M2.1 siguen abiertos.
+
+Cierre H2/H3: serie 0041/0042 y lock verificados localmente y desde clones
+nuevos; 49 enlaces locales válidos, catálogo completo de 43 parches y diff
+sin errores de espacios. Publicación en dev; no integración en master.
