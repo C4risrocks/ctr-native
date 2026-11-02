@@ -1,0 +1,76 @@
+From b2dd68bd834ef3f7323ece9396b2481c9c95b85c Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 12:56:11 -0600
+Subject: [PATCH] raster: pack_placed - the CPU's placed Screen values packed
+ into the executor's 24-float rows
+
+the hardware.rs place()'s pack loop mirrored into metal_hardware:
+the 24-float rows the PlacedDraw takes, from the raster.rs placed
+Screen values - the app-placed vertices' honest shape. DepthMap
+shared out the super's path.
+
+148 tests green.
+---
+ crates/zakuro-gpu/src/raster.rs               |  6 ++--
+ .../zakuro-gpu/src/raster/metal_hardware.rs   | 28 +++++++++++++++++++
+ 2 files changed, 31 insertions(+), 3 deletions(-)
+
+diff --git a/crates/zakuro-gpu/src/raster.rs b/crates/zakuro-gpu/src/raster.rs
+index 1fa813f..7514d9d 100644
+--- a/crates/zakuro-gpu/src/raster.rs
++++ b/crates/zakuro-gpu/src/raster.rs
+@@ -2362,9 +2362,9 @@ impl DepthStencil {
+ /// how clip-space depth becomes the value in the depth buffer, z/w scaled and
+ /// offset by GPUREG_DEPTHMAP_SCALE and _OFFSET.
+ #[derive(Debug, Clone, Copy)]
+-struct DepthMap {
+-    scale: f32,
+-    offset: f32,
++pub(crate) struct DepthMap {
++    pub(crate) scale: f32,
++    pub(crate) offset: f32,
+     /// a w-buffer multiplies the mapped value by w.
+     w_buffer: bool,
+ }
+diff --git a/crates/zakuro-gpu/src/raster/metal_hardware.rs b/crates/zakuro-gpu/src/raster/metal_hardware.rs
+index acee924..6439630 100644
+--- a/crates/zakuro-gpu/src/raster/metal_hardware.rs
++++ b/crates/zakuro-gpu/src/raster/metal_hardware.rs
+@@ -202,6 +202,34 @@ fn sampler_declaration(line: &str) -> Option<(u32, u32, String)> {
+     (!name.is_empty()).then_some((set, binding, name))
+ }
+ 
++/// a draw's placed vertices packed the hardware.rs `place`'s own way: the
++/// 24-float rows the vertex shader reads, from the CPU-placed `Screen`s.
++pub(crate) fn pack_placed(
++    vertices: &[super::Screen],
++    width: u32,
++    height: u32,
++    depth_map: &super::DepthMap,
++) -> Vec<f32> {
++    let mut out = Vec::with_capacity(vertices.len() * 24);
++    for v in vertices {
++        let w = 1.0 / v.inv_w;
++        let x = v.x / width as f32 * 2.0 - 1.0;
++        let y = v.y / height as f32 * 2.0 - 1.0;
++        let depth = v.z * depth_map.scale + depth_map.offset;
++        let (c, t, q, view) = (v.color_over_w, v.texcoords_over_w, v.quaternion_over_w, v.view_over_w);
++        out.extend([
++            x * w, y * w, 0.0, w,
++            c[0] * w, c[1] * w, c[2] * w, c[3] * w,
++            t[0][0] * w, t[0][1] * w, t[1][0] * w, t[1][1] * w,
++            t[2][0] * w, t[2][1] * w, depth, 0.0,
++            q[0] * w, q[1] * w, q[2] * w, q[3] * w,
++            view[0] * w, view[1] * w, view[2] * w,
++            v.texcoord0_w_over_w * w,
++        ]);
++    }
++    out
++}
++
+ /// a local helper (the backend's own `ns` stays private there).
+ fn ns(s: &str) -> Retained<NSString> {
+     NSString::from_str(s)
+-- 
+2.56.0
+
