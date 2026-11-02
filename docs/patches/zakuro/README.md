@@ -59,8 +59,9 @@ como otro parche numerado y actualiza su hash de árbol en el lock.
 | `0039-metal-complete-raster-bindings.patch` | **M1.1 A4**: texturas 0–2, samplers 10–12, Draw/Tables y longitud Naga; pruebas GPU de muestreo y niebla | implementado; despacho real pendiente |
 | `0040-shared-pica-state.patch` | **H1**: uniformes completos, tablas y Filtering compartidos; Vulkan y prueba GPU Metal usan el constructor común | H1 implementado |
 | `0041-metal-pica-textures-samplers.patch` | **H2**: adaptación BoundTexture, mipmaps y samplers PICA; caché propietaria y validación de longitudes | implementado; fallback explícito para modos no soportados |
-| `0042-metal-pica-pipeline-state.patch` | **H3**: estado PICA de shader/depth/stencil/blend/scissor, cachés y pruebas GPU integradas con H2 | implementado; H4–H7 abiertos |
+| `0042-metal-pica-pipeline-state.patch` | **H3**: estado PICA de shader/depth/stencil/blend/scissor, cachés y pruebas GPU integradas con H2 | H3 implementado |
+| `0043-metal-guest-surface-coherence.patch` | **H4**: superficies guest síncronas, color/depth/stencil, coherencia de cachés, fills/copias/restore y transfer acotado | implementado; H5–H7 abiertos |
 
-Estado 2026-11-02 (`dev`, d3225d2): serie hasta 0042, con 0018a intercalado;
+Estado 2026-11-02 (`dev`, d3225d2): serie hasta 0043, con 0018a intercalado;
 bootstrap local y desde clones nuevos verificados contra vendors.lock.json.
 P2-7/P2-8 corregidos en dev; HardwareMetal completo y overlay siguen pendientes.

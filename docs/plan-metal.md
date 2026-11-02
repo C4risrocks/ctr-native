@@ -6,17 +6,19 @@
 > P2-5 está corregido mediante S3; P2-9 está corregido mediante S4 (integración real de
 > 3dsrecomp obligatoria en CI). Consulta [el backlog](../PLAN_REFACTOR_PIPELINE.md).
 
-## Estado PICA vigente — H3 implementado
+## Estado PICA vigente — H4 implementado
 
 - H1 (0040): uniformes, tablas y filtrado compartidos.
 - H2 (0041): adaptación de texturas/mipmaps y samplers desde PICA.
 - H3 (0042): shader, depth/stencil, blend, viewport/scissor y cachés, con prueba GPU.
-- H4–H7 abiertos: coherencia, despacho del juego, batching/presentación y validación.
+- H4 (0043): superficies y memoria guest coherentes mediante write-through síncrono.
+- H5–H7 abiertos: despacho del juego, batching/presentación y validación.
 
 Copy/Noop están soportados; las otras operaciones lógicas se rechazan. Bias
-LOD no cero, texturas desde superficies y packs también requieren el fallback
-coherente de H4/H5. H2/H3 no implican activación del raster en juegos.
-Validación: 484 pruebas default, 499 Metal y compilación Metal sin Vulkan.
+LOD no cero, bindings directos a imágenes GPU y packs también requieren
+fallback. H4 garantiza memoria canónica; H5 conectará su ejecución.
+H1–H4 no implican activación del raster en juegos.
+Validación H4: 484 pruebas default, 503 Metal y compilación Metal sin Vulkan.
 
 ## Estado (2026-11-01) — M0 ✅ **ejecutado y merged a master**
 
@@ -46,7 +48,7 @@ PICA-VS trasladado a MSL con shading por GPU frente al CPU-shading
 | **M1.0.5 ✅ present desacoplado (patch 0019)** | el bundle Metal completo (device, queue, layer, pipeline, texturas ping-pong) en thread propio; canal de 1 frame en vuelo; `setDrawableSize` solo en cambios | partida real **47.5 fps** (×1.84 vs 25.8), 10.5 min sin freeze; flame-graph: el present salió del presupuesto, el cuello restante es el fill rayon del raster (zona M1.1) · smoke 7/7 |
 | **M2 ✅** | companion Metal (por renderer-kind del main), settings persistentes (`renderer: "metal"` toml + combo menús), `native_smoke` +2 casos metal | **7/7 escenarios nativos verdes** (5 vulkan + 2 metal, single y shared) |
 | **M3 ◐ comparación parcial** | dos columnas medidas en `docs/zakuro-macos.md`: **Vulkan 58.1 fps (dry 0.71/min)** vs **Metal+software 47.5 fps (dry alta, cadencia sub-60)** | HardwareMetal **no tiene resultado**: el plan Metal **no se declara cerrado** hasta medir M1.1 |
-| **M1.1 ◐ H1–H3 ✅ · H4–H7 abiertos** | **A1 ✅ (0021)**: el rack de 8 shaders → MSL por naga (device compila 8/8) · **A2 ✅ (0022)**: formatos/pipelines (hallazgo: Apple silicon **no renderiza D24S8** — el raster Metal va por el float twin **D32F_S8**) · **A3a ✅ (0023)**: la cadena de ejecución corriendo hasta píxeles con asserts por cuadrante · **A3b ✅ (0024)**: `raster.frag`+`raster.vert` reales con las uniformes PICA del `Draw` block (DYNAMIC=1 tev/misc/units leídas del std140), combiners verificados por píxel · **A3c ✅ (0025)**: los compute shaders (transfer/depth/upright/upright_image) con su mapa de bindings verbatim y su ejecución comprobada · **A4 — el executor ✅ (0028)**: `HardwareMetal::draw_placed` corre un draw end-to-end (ring staging + pipeline per key + indexed draw + pass con depth) con los píxeles verificados. **A4 — conservación entre draws ✅ (0037), máscaras RGBA y pass sin profundidad ✅ (0038), bindings del executor ✅ (0039)**; **A4 — el Ring ✅ (0026), las uniformes ✅ (0027), el TexturePool ✅ (0029), los Surfaces ✅ (0030), el display transfer ✅ (0031), el write-back ✅ (0032), el slot del app ✅ (0033: `Resources.metal_hardware` declarado; `with_hosts` sin llamadas actuales)** — la capa decode del CPU es gratis para el port (el `TextureCache` compartido) y el `Transfer` del GSP ya vive en `raster.rs` (el shape común). **Queda del A4**: el despacho de `raster::rasterize`'s arm placed llame al `PlacedDraw` del slot (`Resources.metal_hardware`) con las texels del `TextureCache` vía el pool, y el smoke metal-hardware + el headless ×600: MIPS ≥ 85% del mejor camino. **La jugabilidad con raster de hardware sobre Metal YA corre** por la vía Vulkan→MoltenVK (la misma Metal deuda — 58.1 fps en el kpi del 2026-11-01); el Metal-native completo queda como el proyecto multi-sesión que es |
+| **M1.1 ◐ H1–H4 ✅ · H5–H7 abiertos** | **A1 ✅ (0021)**: el rack de 8 shaders → MSL por naga (device compila 8/8) · **A2 ✅ (0022)**: formatos/pipelines (hallazgo: Apple silicon **no renderiza D24S8** — el raster Metal va por el float twin **D32F_S8**) · **A3a ✅ (0023)**: la cadena de ejecución corriendo hasta píxeles con asserts por cuadrante · **A3b ✅ (0024)**: `raster.frag`+`raster.vert` reales con las uniformes PICA del `Draw` block (DYNAMIC=1 tev/misc/units leídas del std140), combiners verificados por píxel · **A3c ✅ (0025)**: los compute shaders (transfer/depth/upright/upright_image) con su mapa de bindings verbatim y su ejecución comprobada · **A4 — el executor ✅ (0028)**: `HardwareMetal::draw_placed` corre un draw end-to-end (ring staging + pipeline per key + indexed draw + pass con depth) con los píxeles verificados. **A4 — conservación entre draws ✅ (0037), máscaras RGBA y pass sin profundidad ✅ (0038), bindings del executor ✅ (0039)**; **A4 — el Ring ✅ (0026), las uniformes ✅ (0027), el TexturePool ✅ (0029), los Surfaces ✅ (0030), el display transfer ✅ (0031), el write-back ✅ (0032), el slot del app ✅ (0033: `Resources.metal_hardware` declarado; `with_hosts` sin llamadas actuales)** — la capa decode del CPU es gratis para el port (el `TextureCache` compartido) y el `Transfer` del GSP ya vive en `raster.rs` (el shape común). **Queda del A4**: el despacho de `raster::rasterize`'s arm placed llame al `PlacedDraw` del slot (`Resources.metal_hardware`) con las texels del `TextureCache` vía el pool, y el smoke metal-hardware + el headless ×600: MIPS ≥ 85% del mejor camino. **La jugabilidad con raster de hardware sobre Metal YA corre** por la vía Vulkan→MoltenVK (la misma Metal deuda — 58.1 fps en el kpi del 2026-11-01); el Metal-native completo queda como el proyecto multi-sesión que es |
 | **M2.1 ⏳ desarrollo abierto** | overlay egui dibujado bajo Metal | el overlay se dibuja sobre las pantallas en la misma ventana |
 
 ## Incremento A4 — 2026-11-02, parche 0037
@@ -216,3 +218,21 @@ Texturas/mipmaps y samplers se construyen desde BoundTexture/Filtering;
 la caché retiene la identidad Arc. Se validan dimensiones y longitud. Bias
 LOD no cero, fuentes GPU y packs se rechazan explícitamente hasta integrar
 fallback/coherencia en H4/H5. El test aislado H2 pasa; H3 valida el muestreo.
+
+## H4 — coherencia guest, parche 0043
+
+GuestDraw carga y confirma color/depth/stencil a memoria tras finalizar cada
+draw. Se verificaron cinco formatos de color y D16/D24/D24S8, lineal/Morton,
+1x/2x/3x, regiones parciales, draws usados como texturas, fills, copies,
+restauración y vistas solapadas. Los transfers grandes usan grupos acotados
+y coinciden con la referencia CPU. Las escrituras invalidan el cache común
+aunque se repitan sobre el mismo destino dentro de una lista.
+
+El readback guest reduce al pixel nativo; la retención/presentación de la
+imagen ampliada queda para H6. Se distinguen rechazo de modo no soportado,
+entrada inválida y fallo de ejecución. Un fallo GPU exige recrear el backend;
+restore no lo rehabilita silenciosamente. Tiles parciales, alias color/depth
+y escalas fuera de 1..3 requieren el fallback de H5.
+
+H4 no activa el raster en un juego: H5 conecta selección y despacho. H6 añade
+batching/presentación directa y H7 acredita paridad y presupuesto.

@@ -276,7 +276,7 @@ bootstrap local y desde clones nuevos correcto; diff sin errores de espacios.
 | H1 | Estado común: uniformes std140 de 408 words, tablas y Filtering; regresiones Vulkan/Metal | Implementado en 0040 |
 | H2 | Texturas/mipmaps y samplers desde PICA, identidad propietaria e invalidación | Implementado en 0041; casos no soportados rechazados |
 | H3 | Especialización de fragmentos, depth/stencil, blend, viewport/scissor y pipelines cacheados | Implementado en 0042; validación GPU correcta |
-| H4 | Superficies coherentes, fills/transfers, sync CPU, solapamientos y savestates | Pendiente |
+| H4 | Superficies coherentes, fills/transfers, sync CPU, solapamientos y savestates | Implementado en 0043: write-through síncrono |
 | H5 | Selección explícita del backend y despacho real desde carga del título y rasterize | Pendiente |
 | H6 | Contexto compartido, batching y presentación directa a ambas ventanas | Pendiente |
 | H7 | Paridad, sesiones y benchmark Metal >=85% Vulkan; regresión Vulkan <=5% | Pendiente |
@@ -334,8 +334,55 @@ un juego con este raster ni se midió el presupuesto de rendimiento.
 
 Validación H2/H3: 484 pruebas default y 499 Metal correctas (tres ignoradas
 habituales por suite), prueba GPU repetida sobre el árbol final y compilación
-metal-only de zakuro-gpu sin Vulkan correcta. H4–H7 y M2.1 siguen abiertos.
+metal-only de zakuro-gpu sin Vulkan correcta. En el cierre H3 quedaban abiertos H4–H7 y M2.1.
 
 Cierre H2/H3: serie 0041/0042 y lock verificados localmente y desde clones
 nuevos; 49 enlaces locales válidos, catálogo completo de 43 parches y diff
 sin errores de espacios. Publicación en dev; no integración en master.
+
+### H4 — superficies y memoria coherentes (0043)
+
+GuestDraw monta color y profundidad desde memoria guest, preserva regiones
+no modificadas y confirma ambos resultados solo después de terminar el GPU
+y sus readbacks. La política inicial es síncrona/write-through: la memoria
+guest vuelve a ser canónica tras cada draw correcto. No hay escrituras GPU
+pendientes que sync_memory/sync_depth deban descargar; esos puntos invalidan
+vistas y texels decodificadas para las operaciones CPU.
+
+Color: RGBA8, RGB8, RGB565, RGB5A1 y RGBA4; memoria lineal y Morton.
+Profundidad: D16/D24/D24S8 mediante twin D32F_S8 y copias separadas de planos
+depth/stencil. Los bits guest de muestras no modificadas se conservan. Se
+renderiza a 1x/2x/3x y el readback guest elige el centro del pixel nativo;
+retener la imagen ampliada y presentarla directamente corresponde a H6.
+
+El ring se retira tras cada draw completado; sus ventanas mutables requieren
+acceso exclusivo y verifican límites. Los transfers tienen grupos 8x8,
+rectángulos validados y writeback visible en CPU. Sus solapamientos se rechazan
+para usar el camino CPU. Fills, texture copies y sync notifican invalidación
+al contexto Metal y al TextureCache compartido. Cada draw guest notifica su
+writeback al cache, incluso dos escrituras consecutivas al mismo destino.
+Esto evita reutilizar una textura decodificada entre ambas escrituras.
+
+La restauración invalida recursos guest y staging. Unsupported, InvalidInput
+y Execution son resultados distintos: formatos/alias/escala no representables
+se rechazan antes del draw; los fallos GPU no publican resultados guest
+incompletos y bloquean el backend hasta recrearlo, también tras un restore.
+Los tiles parciales y escalas fuera de 1..3 necesitan fallback explícito.
+
+Validación local: 484 pruebas default y 503 Metal correctas (tres ignoradas
+habituales por suite), más compilación metal-only sin Vulkan. Las cuatro
+pruebas de H4 comprueban las cinco variantes de color, tres profundidades,
+1x/2x/3x, tiles, conservación parcial, CPU writes, draw→TextureCache→draw,
+fills, copias, restore, vistas solapadas y rechazos sin mutación. Veinte
+transfers con conversión/flip/downscale y filas parciales coinciden byte por
+byte con la referencia CPU, con grids de 48×32 divididos en grupos 8×8.
+La prueba focalizada volvió a pasar sobre el código final.
+
+H5–H7 y M2.1 siguen abiertos. No se activó este raster en juegos ni se acreditó
+paridad/rendimiento de una sesión real. H5 conectará el despacho a GuestDraw
+y sus errores tipados; H6 reemplazará el camino síncrono por batching y
+presentación compartida preservando el contrato de coherencia.
+
+Cierre H4: parche 0043 y lock verificados localmente y desde clones nuevos;
+49 enlaces locales válidos, catálogo completo de 44 parches y diff limpio.
+Publicación en dev; sin integración en master.
