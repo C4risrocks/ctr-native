@@ -274,7 +274,7 @@ bootstrap local y desde clones nuevos correcto; diff sin errores de espacios.
 | Hito | Entrega y aceptación | Estado |
 |---|---|---|
 | H1 | Estado común: uniformes std140 de 408 words, tablas y Filtering; regresiones Vulkan/Metal | Implementado en 0040 |
-| H2 | Texturas/mipmaps y samplers desde PICA, identidad propietaria e invalidación | Pendiente |
+| H2 | Texturas/mipmaps y samplers desde PICA, identidad propietaria e invalidación | Implementado en 0041; casos no soportados rechazados |
 | H3 | Especialización de fragmentos, depth/stencil, blend, viewport/scissor y pipelines cacheados | Pendiente |
 | H4 | Superficies coherentes, fills/transfers, sync CPU, solapamientos y savestates | Pendiente |
 | H5 | Selección explícita del backend y despacho real desde carga del título y rasterize | Pendiente |
@@ -297,3 +297,17 @@ en H7; no se presume cumplimiento del presupuesto por pasar los tests.
 
 Validación H1: 484 pruebas default y 497 Metal correctas (tres ignoradas
 habituales por suite); bootstrap local y desde clones nuevos verificado.
+
+### H2 — texturas y samplers PICA (0041)
+
+BoundTexture alimenta la subida de todos los mipmaps y el sampler derivado
+de Filtering compartido: nearest/linear, mip filter, wrapping y clamps LOD.
+La caché retiene el Arc de texels y no vuelve a subir la misma identidad;
+una identidad nueva crea una entrada nueva. Se validan dimensiones y longitud.
+OwnedTextureBinding conserva textura/sampler durante el draw.
+
+LOD bias no cero, texturas procedentes de superficies y texture packs devuelven
+rechazo explícito antes de subir: su fallback coherente se conecta en H4/H5.
+El color de borde sigue siendo responsabilidad del shader común.
+Prueba aislada de H2: mip cargado y leído, identidad cacheada, propiedad Arc,
+longitud inválida y bias no soportado correctos. H3 amplía la prueba de muestreo.

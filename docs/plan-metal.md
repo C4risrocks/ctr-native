@@ -197,3 +197,10 @@ consume uniformes generados desde registros. El constructor Metal parcial
 se elimina. Ver el seguimiento H1–H7 en el plan raíz: H2 samplers/recursos,
 H3 estado completo, H4 coherencia, H5 despacho, H6 batching/presentación
 y H7 validación siguen pendientes. M1.1 y M2.1 permanecen abiertos.
+
+## H2 — recursos PICA (0041)
+
+Texturas/mipmaps y samplers se construyen desde BoundTexture/Filtering;
+la caché retiene la identidad Arc. Se validan dimensiones y longitud. Bias
+LOD no cero, fuentes GPU y packs se rechazan explícitamente hasta integrar
+fallback/coherencia en H4/H5. El test aislado H2 pasa; H3 valida el muestreo.

@@ -58,7 +58,8 @@ como otro parche numerado y actualiza su hash de árbol en el lock.
 | `0038-metal-color-mask-and-depth-contract.patch` | **M1.1 A4**: máscaras RGBA, passes sin profundidad y rechazo de estados incompatibles; prueba GPU | implementado; M1.1 abierto |
 | `0039-metal-complete-raster-bindings.patch` | **M1.1 A4**: texturas 0–2, samplers 10–12, Draw/Tables y longitud Naga; pruebas GPU de muestreo y niebla | implementado; despacho real pendiente |
 | `0040-shared-pica-state.patch` | **H1**: uniformes completos, tablas y Filtering compartidos; Vulkan y prueba GPU Metal usan el constructor común | implementado; H2–H7 abiertos |
+| `0041-metal-pica-textures-samplers.patch` | **H2**: adaptación BoundTexture, mipmaps y samplers PICA; caché propietaria y validación de longitudes | implementado; fallback explícito para modos no soportados |
 
-Estado 2026-11-02 (`dev`, d3225d2): serie hasta 0040, con 0018a intercalado;
+Estado 2026-11-02 (`dev`, d3225d2): serie hasta 0041, con 0018a intercalado;
 bootstrap local y desde clones nuevos verificados contra vendors.lock.json.
 P2-7/P2-8 corregidos en dev; HardwareMetal completo y overlay siguen pendientes.
