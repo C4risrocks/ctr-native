@@ -1,5 +1,10 @@
 # G4 · Vulkan (MoltenVK) vs Metal-direct — informe go/no-go
 
+> Estado vigente: H1–H4 implementados en dev hasta `fd6b6f1`; H5–H7 y
+> M2.1 abiertos. Véanse [estado raíz](../ESTADO_PROYECTO.md) y
+> [plan restante](../PLAN_REFACTOR_PIPELINE.md#plan-restante-después-de-h4).
+> Las mediciones siguientes conservan sus fechas y revisiones originales.
+
 > Registro histórico: las mediciones y cierres se refieren a sus revisiones
 > originales. El estado vigente está en [el backlog](../PLAN_REFACTOR_PIPELINE.md)
 > y [development.md](development.md). La presentación Metal ya existe; el raster

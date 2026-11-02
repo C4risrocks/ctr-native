@@ -166,14 +166,14 @@ compiler version/arguments and SDK settings; and pins CC/SDKROOT for execution.
 SDK installations are assumed immutable; SDK headers are not individually hashed.
 Old v1 entries remain on disk but are not reused.
 
-## Current audit status (2026-11-02, dev at d3225d2)
+## Current audit status (2026-11-02, technical baseline dev at fd6b6f1)
 
 The four P1 fixes are recorded in `ca51d6a` and `725bb82`. The authoritative
 [audit backlog](../PLAN_REFACTOR_PIPELINE.md#auditoría-2026-11-01-sobre-be10b73)
 records P2-6 (structured pipeline failures), P2-7 (Metal texture synchronization)
 and P2-8 (nonblocking frame delivery) as fixed on `dev`. P2-5 is fixed by S3; P2-9 (real recompiler integration) is fixed by S4; all five P2 findings are corrected on `dev`.
-Native patches extend through 0036, including 0018a; the lock covers the resulting tree.
-Local native suites passed 483 tests without Metal and 495 with Metal. CI runs
+Native patches extend through 0043, including 0018a; the lock covers the resulting tree.
+H4 local native suites passed 484 tests without Metal and 503 with Metal. CI runs
 the default suite and compiles Metal tests with `--no-run`; GPU execution is local.
 
 ### Required real AOT integration (S4)
@@ -188,3 +188,16 @@ The macOS `real-aot-integration` CI job performs these steps with a manufactured
 ARM ROM. Missing tools and compiler failures fail this job. Ordinary local
 discovery may skip only when the recompiler binary is absent. This checks
 compilation and bundled library bytes, not runtime/game compatibility.
+
+
+## Metal integration handoff after H4
+
+H1–H4 are implemented. GuestDraw uses synchronous write-through and notifies
+the shared TextureCache on every completed write, including repeated writes
+to the same range. H5 must connect loader/config/rasterize and typed errors;
+H6 adds batching/shared presentation; H7 measures parity and the performance gate.
+None of these local GPU tests proves a real game is using HardwareMetal.
+See [project status](../ESTADO_PROYECTO.md), the
+[remaining plan](../PLAN_REFACTOR_PIPELINE.md#plan-restante-después-de-h4) and the
+[root walkthrough](../WALKTHROUGH.md). The original docs/walkthrough URL remains
+as a compatibility link.

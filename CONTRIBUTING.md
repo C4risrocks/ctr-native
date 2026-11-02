@@ -25,4 +25,6 @@ above. The shared builder has eight stages and obtains AOT automatically.
 Export every native commit in dependency order, update the locked tree, and
 reconstruct the full patch series in a fresh directory before publishing it.
 See [development](docs/development.md) and the
-[open audit findings](PLAN_REFACTOR_PIPELINE.md#auditoría-2026-11-01-sobre-be10b73).
+[audit record and remaining implementation](PLAN_REFACTOR_PIPELINE.md#auditoría-2026-11-01-sobre-be10b73).
+
+Current handoff: [status](ESTADO_PROYECTO.md), [remaining plan](PLAN_REFACTOR_PIPELINE.md#plan-restante-después-de-h4) and [walkthrough](WALKTHROUGH.md).

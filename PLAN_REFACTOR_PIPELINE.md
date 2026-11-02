@@ -11,8 +11,17 @@ La tabla de auditoría al final es la referencia de sus estados.
 Validación histórica anterior a S4: 77 pruebas Python (una omitida entonces), Ruff,
 Pyright y bootstrap local y desde clones nuevos correctos. Los resultados
 históricos no implican cierre de los pendientes ni validación de otra edición.
-Las secciones de diseño siguientes conservan el objetivo; los detalles aún no
-implementados, como la huella completa del compilador/SDK, siguen pendientes.
+Las secciones de diseño siguientes conservan el objetivo original. S3 implementó
+la huella del toolchain/SDK; permanece la suposición de SDK inmutable, sin hash
+de cada header. El estado actual y los pendientes están resumidos en
+[ESTADO_PROYECTO.md](ESTADO_PROYECTO.md).
+
+## Continuidad después de H4
+
+Base técnica: `fd6b6f1` en dev. H1–H4 implementados; H5–H7 abiertos.
+El [plan restante](#plan-restante-después-de-h4) es la guía de implementación
+vigente; las entregas anteriores conservan sus evidencias históricas.
+El [walkthrough completo](WALKTHROUGH.md) está también en la raíz.
 
 ## 1. Objetivo y alcance
 
@@ -386,3 +395,91 @@ presentación compartida preservando el contrato de coherencia.
 Cierre H4: parche 0043 y lock verificados localmente y desde clones nuevos;
 49 enlaces locales válidos, catálogo completo de 44 parches y diff limpio.
 Publicación en dev; sin integración en master.
+
+## Plan restante después de H4
+
+Los siguientes hitos continúan desde `fd6b6f1`. Cada entrega debe incluir
+código, pruebas, parche nativo numerado, lock, bootstrap desde clones nuevos,
+documentación y push a dev. Vulkan permanece por defecto. No integrar en
+master ni cerrar M1.1 antes de H7.
+
+### H5 — activar y conectar el despacho real
+
+**Depende de H4.** Añadir a Config selección explícita de raster y un contexto
+gráfico tipado Vulkan/Metal; mantener hardware_renderer como interruptor.
+Actualizar frontend y loader para elegir el backend antes de cargar el título.
+Conservar un wrapper Vulkan para los consumidores de enable_hardware_renderer.
+
+Mantener un único backend activo en Resources, con creación diferida; retirar
+la inicialización sin llamadas útiles de with_hosts. Con renderer Metal y
+hardware activado, elegir HardwareMetal incluso en headless, sin inicializar
+Vulkan ni sustituirlo silenciosamente por MoltenVK.
+
+En la rama de vértices colocados de rasterize, construir el estado común de H1,
+recursos H2 y RasterState H3. Invocar GuestDraw de H4 pasando obligatoriamente
+el TextureCache compartido para notificar cada writeback. Mantener vértices
+CPU y estructuras comunes; no introducir estrategias por juego.
+
+Conectar draws_on_gpu, escala y lectura de imágenes con la ruta real. Presentar
+inicialmente desde memoria/readback coherente, sin declarar presentación directa.
+Contabilizar draws Metal, fallbacks y sus motivos. Unsupported permite software
+sobre la memoria canónica de H4; InvalidInput y Execution se propagan y no se
+contabilizan como draws correctos. Un fallo GPU requiere recrear el backend.
+
+**Aceptación:** comandos PICA sintéticos a través de la interfaz pública producen
+píxeles con contador Metal positivo; pruebas de selección/errores y funcionamiento
+sin loader Vulkan. Registrar sesiones ALBW y MM3D USA con revisión, configuración
+y contadores, sin deducir jugabilidad del test-pattern. No tocar guardados existentes.
+
+### H6 — batching y presentación directa
+
+**Depende de H5.** Compartir un contexto Metal entre raster y presentadores main/
+companion. Extender GpuScreen con una variante Metal propietaria: textura,
+generación, recorte y sincronización de productor y consumidores.
+
+Reemplazar el write-through síncrono por batches y superficies con rangos dirty,
+preservando el contrato de H4. Mantener hasta tres batches en vuelo; retirar
+staging por finalización GPU, sin wait por draw. Conservar recursos mientras
+cualquier ventana los use; descartar frames también debe liberar referencias.
+No trasladar NSView ni operaciones de ventana fuera del hilo principal.
+
+Mantener try_send y entrega no bloqueante; readback exacto para consumidores
+que no compartan contexto, captura y operaciones CPU. Retener imágenes a la
+resolución solicitada para presentarlas sin reducirlas al pixel guest.
+
+**Aceptación:** presión sobre el ring, productores/consumidores lentos, frames
+descartados, dos ventanas, resize y cierre/reapertura sin corrupción ni bloqueo;
+sincronización correcta en lecturas CPU, restore y fallback.
+
+### H7 — paridad y presupuesto de rendimiento
+
+**Depende de H6.** Ejecutar suites Python/Rust, integración AOT obligatoria,
+fuzz/lint/types, smokes gráficos y reconstrucción limpia. Ejecutar GPU localmente;
+compilar en CI no cuenta como validación GPU.
+
+Comparar Vulkan y Metal con la misma ROM/AOT, resolución de raster, escala de
+ventana, idioma y entorno: tres
+corridas de 600 frames, usando la mediana. Separar compilación en frío de
+rendimiento sostenido, audio y fallbacks. Exigir paridad de escenarios controlados,
+Metal >=85% del throughput Vulkan y regresión Vulkan <=5%.
+
+Registrar pruebas por edición/revisión. F7 en dos monitores reales, DPI, touch,
+fullscreen y audio requieren evidencia física y no se cierran mediante fixtures.
+Si un umbral falla, mantener M1.1 abierto con la medición y la causa pendiente.
+
+### Otros pendientes del proyecto
+
+- **M2.1:** overlay egui Metal, después de disponer del contexto compartido:
+  atlas/deltas, meshes, scissor, alpha premultiplicado, HiDPI y recursos válidos
+  aunque se descarten frames. No está incluido en el cierre H4.
+- **Higiene automática:** comando reutilizable y CI para enlaces locales,
+  artefactos versionados y nombres sensibles, sin imprimir valores de secretos.
+  Conservar la revisión manual hasta implementarlo; no borrar datos de usuario.
+- **MM3D EUR:** continuar únicamente con el dump/edición correspondientes y
+  validación propia; la sesión USA no acredita EUR.
+- **Upstream:** revisar dependencias y estado remoto antes de publicar PRs de
+  la serie; consultar el registro de revisión, sin presumir aprobación ni merge.
+
+El procedimiento de preparación, build, juego y mantenimiento está en
+[WALKTHROUGH.md](WALKTHROUGH.md); el panorama operativo, en
+[ESTADO_PROYECTO.md](ESTADO_PROYECTO.md).

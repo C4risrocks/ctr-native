@@ -1,5 +1,10 @@
 # Audit implementation — 0.2.0
 
+> Estado vigente: H1–H4 implementados en dev hasta `fd6b6f1`; H5–H7 y
+> M2.1 abiertos. Véanse [estado raíz](../ESTADO_PROYECTO.md) y
+> [plan restante](../PLAN_REFACTOR_PIPELINE.md#plan-restante-después-de-h4).
+> Las mediciones siguientes conservan sus fechas y revisiones originales.
+
 > Historical record: measurements and completion claims below refer to their
 > original revisions. For current status see [the audit backlog](../PLAN_REFACTOR_PIPELINE.md)
 > and [development](development.md). Metal presentation now exists, while the

@@ -1,5 +1,10 @@
 # Candidatos a PR upstream — revisión de dependencias, base y pruebas
 
+> Registro histórico de revisión upstream, conservado con sus fechas. La serie
+> local actual llega a 0043 en la base técnica `fd6b6f1`; esta entrega documental
+> no consulta ni cambia el estado remoto de los PRs. Verificarlo antes de publicar.
+> [Estado actual del proyecto](../../../ESTADO_PROYECTO.md).
+
 > Estado (2026-11-01, con el PR upstream #26 en escena): **un PR abierto de
 > esta serie — #27 cecd, base `80d78be`, un archivo, 31 líneas** — y los
 > demais a la espera de su destino. Base de la serie: upstream `80d78be`

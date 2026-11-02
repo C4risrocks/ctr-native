@@ -21,3 +21,5 @@ builds with a "provisional profile" line in the report
 
 Current builder: AOT is obtained automatically from a verified per-title cache;
 manual global installation paths above describe historical bring-up only.
+
+El [estado del runtime](../../ESTADO_PROYECTO.md), el [plan restante](../../PLAN_REFACTOR_PIPELINE.md#plan-restante-después-de-h4) y el [walkthrough](../../WALKTHROUGH.md) están en la raíz. Las validaciones de un perfil no se transfieren automáticamente a otra edición o backend.

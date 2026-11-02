@@ -15,7 +15,7 @@ reader). A Nintendo-pad or Xbox controller is detected automatically.
 In-game keys: `Esc` opens the menu, `F1` pauses, `F9` cycles the screen
 arrangements, `F10` switches between the top and the bottom screen alone,
 `F11` fullscreen, `F5`/`F8` save and load a state. The full guide, plus the
-dual-monitor mode: [walkthrough.md](walkthrough.md).
+dual-monitor mode: [WALKTHROUGH.md](../WALKTHROUGH.md).
 
 ## Saves
 
@@ -26,11 +26,11 @@ absolute paths. Nothing gets overwritten between builds.
 
 ## Troubleshooting
 
-- **Blank grey icon**: pass `--no-icon` or ask about `--app-name`; the SMDH
-  icon never matched your bundle name otherwise. Not fatal.
+- **Blank grey icon**: inspect the SMDH or pass `--no-icon`; `--app-name`
+  changes the bundle name and does not bypass icon decoding.
 - **"MD5 does not match the profile pin"**: your dump is a different release
-  (update, another region) — correct, but tell ctr-native: copy the matching
-  MD5 into the game's profile or pass `--allow-damaged`.
+  (update, another region): use the matching profile for that exact edition, or pass `--allow-damaged` explicitly; the
+  override does not establish compatibility.
 - **Slow first minutes**: the first session compiles shaders upfront; later
   runs warm from the sandbox's cache.
 - A bug report: `python3 scripts/bug_report.py "<game>.app"` — the zip

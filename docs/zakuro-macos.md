@@ -1,5 +1,10 @@
 # zakuro-macOS — estado del port (Fases 0–6 completadas)
 
+> Estado vigente: H1–H4 implementados en dev hasta `fd6b6f1`; H5–H7 y
+> M2.1 abiertos. Véanse [estado raíz](../ESTADO_PROYECTO.md) y
+> [plan restante](../PLAN_REFACTOR_PIPELINE.md#plan-restante-después-de-h4).
+> Las mediciones siguientes conservan sus fechas y revisiones originales.
+
 > Auditoría vigente: la presentación Metal sigue siendo experimental. La
 > sincronización de texturas y la entrega no bloqueante están corregidas en
 > `dev` (0020). HardwareMetal y el overlay siguen pendientes; los KPI

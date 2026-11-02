@@ -5,7 +5,7 @@ lo cuentan en distintos niveles.
 
 ## Para el jugador (empezar aquí)
 
-- **[walkthrough.md](walkthrough.md)** — la guía end-to-end: de tu dump al doble
+- **[WALKTHROUGH.md](../WALKTHROUGH.md)** — la guía end-to-end: de tu dump al doble
   clic: build, controles, atajos (F1/F9/F10/F11/Esc), modo dual monitor (F7),
   diagnóstico y glosario.
 - **[playing.md](playing.md)** — controles y troubleshooting clásico del host
@@ -28,6 +28,10 @@ previas no certifican la sincronización ni publicación del código actual.
   cambia en vivo, y la línea `session kpi` al cerrar.
 
 ## Planes
+
+- [Estado del proyecto](../ESTADO_PROYECTO.md): base técnica, validaciones y límites.
+- [Plan restante en la raíz](../PLAN_REFACTOR_PIPELINE.md#plan-restante-después-de-h4):
+  H5–H7, overlay, higiene automática, QA física, EUR y upstream.
 
 - **[plan-metal.md](plan-metal.md)** — el plan del backend Metal (M0..M3) y
   el progreso de presentación Metal, raster hardware pendiente y límites actuales.
@@ -64,4 +68,4 @@ previas no certifican la sincronización ni publicación del código actual.
 - [Majora’s Mask](../PLAN_MAJORAS_MASK_3D.md): USA validada, EUR pendiente.
 - [Desarrollo](development.md): ocho etapas, caché AOT validada y comandos actuales.
 - [Metal](plan-metal.md): presentación experimental con raster software; sincronización y
-  entrega no bloqueante corregidas en `dev`; HardwareMetal y overlay pendientes.
+  entrega no bloqueante corregidas en `dev`; H1–H4 implementados, H5–H7 y overlay pendientes.

@@ -84,7 +84,7 @@ La app dependerá de la ROM externa en su ubicación definitiva. Guardados y con
 
 ## Pruebas y criterios de aceptación
 
-- Ejecutar la suite Python, Ruff, Pyright y los cinco escenarios gráficos sintéticos existentes.
+- Ejecutar la suite Python, Ruff, Pyright y los escenarios gráficos sintéticos vigentes (incluidos los casos Metal cuando el binario los soporte).
 - Exigir que el arranque automático complete los 120 fotogramas sin errores fatales.
 - Comprobar visualmente el idioma español, ambas pantallas, controles, audio, redimensionado y pantalla completa.
 - Abrir los menús nativos repetidamente para comprobar que no reaparece el fallo de ImageIO.
@@ -99,3 +99,5 @@ Los comandos manuales AOT y rutas de instalación anteriores documentan el
 bring-up histórico. El builder actual obtiene AOT automáticamente y empaqueta
 la biblioteca de caché validada. Los cuatro P1 están cerrados; los cinco P2
 figuran en [el plan del pipeline](PLAN_REFACTOR_PIPELINE.md). EUR sigue pendiente.
+
+Estado de integración del runtime: H1–H4 implementados; H5–H7 abiertos. La validación USA previa sigue separada del objetivo EUR. Véanse [estado](ESTADO_PROYECTO.md) y [walkthrough](WALKTHROUGH.md).

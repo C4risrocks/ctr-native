@@ -1,13 +1,15 @@
 # Roadmap F7–F8 (pendientes y decisiones)
 
-## Estado actual — 2026-11-02 (dev en d3225d2)
+## Estado actual — 2026-11-02 (base técnica dev en fd6b6f1)
 
 - Pipeline común de ocho etapas; AOT automática desde caché validada.
 - P1-1/P1-2 corregidos en `ca51d6a`; P1-3/P1-4 en `725bb82`.
 - P2-6/P2-7/P2-8 corregidos en `dev`; P2-5 corregido (S3); P2-9 corregido (S4). Detalle en el [plan del refactor](../PLAN_REFACTOR_PIPELINE.md).
 - Majora USA validada; objetivo EUR pendiente en su [plan](../PLAN_MAJORAS_MASK_3D.md).
-- Metal: presentación experimental con raster software; HardwareMetal y overlays
-  pendientes. Consultar [plan Metal](plan-metal.md).
+- Metal: presentación experimental con raster software; H1–H4 implementados.
+  H5 despacho, H6 batching/presentación, H7 validación y M2.1 overlay pendientes.
+  El [plan restante](../PLAN_REFACTOR_PIPELINE.md#plan-restante-después-de-h4)
+  y el [estado raíz](../ESTADO_PROYECTO.md) detallan la continuidad.
 - Validación física con dos monitores y comparación controlada de rendimiento
   siguen separadas de los smokes sintéticos. Las mediciones de sesiones están
   fechadas en [zakuro-macos](zakuro-macos.md).

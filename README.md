@@ -89,4 +89,15 @@ and P2-8 (nonblocking Metal delivery) are fixed. P2-5 (toolchain fingerprinting)
 P2-9 (real recompiler integration) is fixed by S4; all five P2 findings are corrected on `dev`.
 See [the audit backlog](PLAN_REFACTOR_PIPELINE.md#auditoría-2026-11-01-sobre-be10b73)
 and [the current roadmap](docs/roadmap.md). A successful synthetic smoke does
-not certify game compatibility or close these findings.
+not certify game compatibility.
+
+
+HardwareMetal H1–H4 are implemented and locally tested through `fd6b6f1`;
+H5 (game dispatch), H6 (batching/direct presentation), H7 (parity/performance)
+and the Metal overlay remain open. Vulkan remains the default.
+
+Project handoff documents are at the repository root:
+
+- [Current project status](ESTADO_PROYECTO.md).
+- [Remaining implementation plan](PLAN_REFACTOR_PIPELINE.md#plan-restante-después-de-h4).
+- [Complete walkthrough](WALKTHROUGH.md).

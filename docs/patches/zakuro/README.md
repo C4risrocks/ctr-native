@@ -62,6 +62,6 @@ como otro parche numerado y actualiza su hash de árbol en el lock.
 | `0042-metal-pica-pipeline-state.patch` | **H3**: estado PICA de shader/depth/stencil/blend/scissor, cachés y pruebas GPU integradas con H2 | H3 implementado |
 | `0043-metal-guest-surface-coherence.patch` | **H4**: superficies guest síncronas, color/depth/stencil, coherencia de cachés, fills/copias/restore y transfer acotado | implementado; H5–H7 abiertos |
 
-Estado 2026-11-02 (`dev`, d3225d2): serie hasta 0043, con 0018a intercalado;
+Estado 2026-11-02 (base técnica `dev`, fd6b6f1): serie hasta 0043, con 0018a intercalado;
 bootstrap local y desde clones nuevos verificados contra vendors.lock.json.
 P2-7/P2-8 corregidos en dev; HardwareMetal completo y overlay siguen pendientes.

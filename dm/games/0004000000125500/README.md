@@ -28,3 +28,11 @@ copia de trabajo. El launcher utiliza esa copia; no incluye claves.
 
 El builder actual obtiene AOT automáticamente desde una caché validada por
 título; las rutas globales anteriores documentan solo el bring-up histórico.
+
+## Estado del runtime después de H4
+
+Las sesiones registradas anteriormente corresponden al camino Vulkan/MoltenVK.
+HardwareMetal H1–H4 está implementado en dev, pero H5–H7 siguen abiertos;
+no hay una nueva validación del título sobre ese raster.
+Ver [estado del proyecto](../../../ESTADO_PROYECTO.md) y
+[walkthrough](../../../WALKTHROUGH.md).

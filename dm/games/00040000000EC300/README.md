@@ -13,3 +13,11 @@ First bring-up of ctr-native (2026-10-30).
 
 Fase 2 (ctr HLE host) notes: ALBW loads its DSP firmware through MMIO-less
 hle; keep the audio path HLE first.
+
+## Estado del runtime después de H4
+
+Las sesiones registradas anteriormente corresponden al camino Vulkan/MoltenVK.
+HardwareMetal H1–H4 está implementado en dev, pero H5–H7 siguen abiertos;
+no hay una nueva validación del título sobre ese raster.
+Ver [estado del proyecto](../../../ESTADO_PROYECTO.md) y
+[walkthrough](../../../WALKTHROUGH.md).
