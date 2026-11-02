@@ -243,3 +243,28 @@ Este incremento no cierra M1.1 ni M2.1. Vulkan continúa por defecto.
 
 Validación 0038: 483 pruebas sin Metal y 496 con Metal correctas; bootstrap
 local y desde clones nuevos verificado; 49 enlaces locales válidos y diff limpio.
+
+### M1.1 A4 — bindings completos del executor (0039)
+
+`PlacedDraw.textures` contiene tres pares explícitos textura/sampler; sustituye
+texture0 y elimina la segunda fuente de uniformes que estaba sin usar. Se
+enlazan texturas 0–2, samplers 10–12, Draw en 3, Tables en 4 y la longitud
+en bytes de Tables en 30, según el ABI de Naga para el array dinámico.
+Las unidades desactivadas se desenlazan explícitamente; activar una unidad
+sin su par textura/sampler falla antes del staging. Draw exige sus 408 words
+completos: 376 no cubrían luces, procedural y fog según el std140 real.
+Los recursos prestados se mantienen válidos hasta terminar el draw síncrono.
+
+Pruebas GPU: cada unidad selecciona un color distinto mediante raster.frag;
+la niebla mezcla azul y amarillo mediante Tables y el último vec4 de Draw;
+uniformes truncados y unidad activa sin recurso fallan de forma explícita.
+La suite Metal mantiene 496 pruebas correctas y tres ignoradas habituales.
+
+Esto cierra los bindings del executor, no M1.1: siguen pendientes generar
+el bloque completo desde el estado real (draw_uniform_block aún es parcial),
+crear samplers desde el estado PICA, conectar rasterize, depth/stencil, blend,
+batching y presentación compartida. No se acredita jugabilidad ni rendimiento.
+
+Validación 0039: 483 pruebas default y 496 Metal correctas, tres ignoradas
+habituales por suite; prueba GPU focalizada repetida sobre el árbol final;
+bootstrap local y desde clones nuevos correcto; diff sin errores de espacios.
