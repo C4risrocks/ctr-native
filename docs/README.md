@@ -60,8 +60,8 @@ previas no certifican la sincronización ni publicación del código actual.
 ## Estado y planes vigentes
 
 - [Pipeline y auditoría](../PLAN_REFACTOR_PIPELINE.md): cuatro P1 cerrados,
-  cinco P2 abiertos (uno parcialmente corregido).
+  P2-6/P2-7/P2-8 corregidos en `dev`; P2-5 corregido (S3); P2-9 pendiente.
 - [Majora’s Mask](../PLAN_MAJORAS_MASK_3D.md): USA validada, EUR pendiente.
 - [Desarrollo](development.md): ocho etapas, caché AOT validada y comandos actuales.
-- [Metal](plan-metal.md): presentación con raster software; sincronización,
-  entrega de frames, overlays y raster hardware aún requieren trabajo.
+- [Metal](plan-metal.md): presentación experimental con raster software; sincronización y
+  entrega no bloqueante corregidas en `dev`; HardwareMetal y overlay pendientes.

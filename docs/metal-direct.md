@@ -3,7 +3,7 @@
 > Registro histórico: las mediciones y cierres se refieren a sus revisiones
 > originales. El estado vigente está en [el backlog](../PLAN_REFACTOR_PIPELINE.md)
 > y [development.md](development.md). La presentación Metal ya existe; el raster
-> HardwareMetal y las correcciones P2 documentadas siguen pendientes.
+> HardwareMetal sigue pendiente; P2-6/P2-7/P2-8 están corregidos en `dev`.
 
 Pregunta: ¿vale la pena un backend Metal directo en `zakuro-gpu` en vez de
 pasar por MoltenVK (Vulkan→Metal)?

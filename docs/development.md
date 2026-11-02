@@ -35,7 +35,7 @@ Every run reports the same eight stages, numbered 1 through 8 (`dm/build`):
    per-title cache after verifying its manifest and library SHA-256. The
    library is packaged directly from that cache; global installations are
    ignored. `--recompiler-bin` and `--rebuild-aot` select the tool or force a
-   rebuild. Toolchain fingerprint completeness remains P2-5.
+   rebuild. Toolchain fingerprinting uses cache format v2 (S3).
 6. **metadata and icon** — decode SMDH, or skip with `--no-icon`. Truncated
    SMDH is an error; a complete SMDH without titles uses `Game` as the app
    name.
@@ -161,12 +161,17 @@ manifest format, title ID, architecture, fingerprint and library SHA-256 on each
 reuse, and serializes builds of the same fingerprint with a file lock. Global
 installed libraries and hints are neither imported nor overwritten. A missing
 recompiler fails explicitly; unrecorded installed libraries are not a fallback.
-The current fingerprint's compiler/SDK coverage remains an open P2 audit item.
+Cache v2 hashes the ROM, runtime, recompiler and resolved C compiler; records
+compiler version/arguments and SDK settings; and pins CC/SDKROOT for execution.
+SDK installations are assumed immutable; SDK headers are not individually hashed.
+Old v1 entries remain on disk but are not reused.
 
-## Current audit status (2026-11-01)
+## Current audit status (2026-11-02, dev at d3225d2)
 
 The four P1 fixes are recorded in `ca51d6a` and `725bb82`. The authoritative
 [audit backlog](../PLAN_REFACTOR_PIPELINE.md#auditoría-2026-11-01-sobre-be10b73)
-retains five P2 items; in particular controlled failures are not yet guaranteed
-for every parser/process error. Cache-hit stage completion has been fixed.
-Native patches include 0018a before 0019; the lock covers their resulting tree.
+records P2-6 (structured pipeline failures), P2-7 (Metal texture synchronization)
+and P2-8 (nonblocking frame delivery) as fixed on `dev`. P2-5 is fixed by S3; P2-9 (real recompiler integration) remains open.
+Native patches extend through 0036, including 0018a; the lock covers the resulting tree.
+Local native suites passed 483 tests without Metal and 495 with Metal. CI runs
+the default suite and compiles Metal tests with `--no-run`; GPU execution is local.

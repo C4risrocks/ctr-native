@@ -13,20 +13,14 @@ import hashlib
 import json
 import os
 import platform
+import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
-from dm.build.models import AotArtifact, BuildError, PreparedGame
+from dm.build.models import AOT_CACHE_FORMAT, AotArtifact, BuildError, PreparedGame
 
 MANIFEST = "manifest.json"
-_AOT_CACHE_FORMAT_CHUNK = b"ctr-native-aot-cache-v1\x00"
-
-
-def _file_stamp(path: Path) -> str:
-    stat = path.stat()
-    return f"{stat.st_size}:{stat.st_mtime_ns}"
-
-
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with open(path, "rb", buffering=0) as file:
@@ -35,15 +29,54 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def fingerprint(prepared: PreparedGame, zakuro_stamp: str, compiler_bin: Path) -> str:
-    """Prepared ROM + both tool stamps + compiler identity + arch + cache format."""
-    digest = hashlib.sha256()
-    digest.update(_AOT_CACHE_FORMAT_CHUNK)
-    digest.update(_file_sha256(prepared.working_source).encode())
-    digest.update(zakuro_stamp.encode())
-    digest.update(_file_stamp(compiler_bin).encode())
-    digest.update(platform.machine().encode())
-    return digest.hexdigest()
+def toolchain_identity() -> tuple[dict, dict[str, str]]:
+    """Resolve once and pin the compiler and SDK passed to the recompiler."""
+    env = dict(os.environ)
+    named = env.get("CC", "").strip()
+    words = ([named] if named and Path(named).is_file() else named.split())
+    if not words:
+        words = [next((p for name in ("cc", "gcc", "clang")
+                       if (p := shutil.which(name))), "cc")]
+    program = shutil.which(words[0])
+    if not program:
+        raise BuildError("aot", f"C compiler not found: {words[0]}")
+    program = str(Path(program).resolve())
+    if any(c.isspace() for c in program) and len(words) > 1:
+        raise BuildError("aot", "3dsrecomp cannot represent a compiler path with spaces and arguments")
+    command = [program, *words[1:]]
+    version = subprocess.run([*command, "--version"], capture_output=True,
+                             text=True, timeout=30, check=True).stdout
+    env["CC"] = " ".join(command)
+    sdk = env.get("SDKROOT", "")
+    if platform.system() == "Darwin" and not sdk:
+        sdk = subprocess.run(["/usr/bin/xcrun", "--show-sdk-path"],
+                             capture_output=True, text=True, timeout=30,
+                             check=True).stdout.strip()
+    settings = {}
+    if sdk:
+        sdk_path = Path(sdk).resolve()
+        if not sdk_path.is_dir():
+            raise BuildError("aot", f"SDK directory missing: {sdk_path}")
+        env["SDKROOT"] = str(sdk_path)
+        settings = {p.name: _file_sha256(p) for p in
+                    (sdk_path / "SDKSettings.json", sdk_path / "SDKSettings.plist")
+                    if p.is_file()}
+    identity = {"compiler": program, "sha256": _file_sha256(Path(program)),
+                "args": words[1:], "version": version,
+                "sdk": env.get("SDKROOT", ""), "sdk_settings": settings,
+                "environment": {k: env.get(k, "") for k in
+                    ("DEVELOPER_DIR", "MACOSX_DEPLOYMENT_TARGET", "CPATH",
+                     "C_INCLUDE_PATH", "LIBRARY_PATH", "PATH")}}
+    return identity, env
+
+
+def fingerprint(prepared: PreparedGame, zakuro_stamp: str, compiler_bin: Path,
+                toolchain: dict) -> str:
+    payload = {"format": AOT_CACHE_FORMAT,
+               "rom": _file_sha256(prepared.working_source),
+               "host": zakuro_stamp, "recompiler": _file_sha256(compiler_bin),
+               "toolchain": toolchain, "arch": platform.machine()}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 def obtain_aot(flow, prepared: PreparedGame, zakuro_stamp: str) -> AotArtifact:
@@ -51,15 +84,18 @@ def obtain_aot(flow, prepared: PreparedGame, zakuro_stamp: str) -> AotArtifact:
     compiler_bin = request.recompiler_bin or (request.root / "vendors/3dsrecomp/target/release/3dsrecomp")
     if not compiler_bin.is_file():
         raise BuildError("aot", f"the AOT compiler is missing at {compiler_bin}")
-    fingerprint_value = fingerprint(prepared, zakuro_stamp, compiler_bin)
+    toolchain, build_env = toolchain_identity()
+    host = request.zakuro_bin or flow.resolve_zakuro()
+    fingerprint_value = fingerprint(prepared, _file_sha256(host), compiler_bin, toolchain)
     cache_root = prepared.build_dir / "aot"
     cache_root.mkdir(parents=True, exist_ok=True)
     with (cache_root / f"{fingerprint_value}.lock").open("a+b") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        return _obtain_locked(flow, prepared, compiler_bin, fingerprint_value)
+        return _obtain_locked(flow, prepared, compiler_bin, fingerprint_value, toolchain, build_env)
 
 
-def _obtain_locked(flow, prepared: PreparedGame, compiler_bin: Path, fingerprint_value: str) -> AotArtifact:
+def _obtain_locked(flow, prepared: PreparedGame, compiler_bin: Path, fingerprint_value: str,
+                   toolchain: dict, build_env: dict[str, str]) -> AotArtifact:
     request = flow.request
     cache_dir = prepared.build_dir / "aot" / fingerprint_value
     manifest = cache_dir / MANIFEST
@@ -70,7 +106,7 @@ def _obtain_locked(flow, prepared: PreparedGame, compiler_bin: Path, fingerprint
     if have_cache:
         try:
             cached = json.loads(manifest.read_text())
-            if (isinstance(cached, dict) and cached.get("format") == "aot-cache-v1"
+            if (isinstance(cached, dict) and cached.get("format") == AOT_CACHE_FORMAT
                     and cached.get("title_id") == prepared.title_id
                     and cached.get("arch") == platform.machine()
                     and cached.get("fingerprint") == fingerprint_value
@@ -86,7 +122,7 @@ def _obtain_locked(flow, prepared: PreparedGame, compiler_bin: Path, fingerprint
             isolated_home = Path(home)
             command = [str(compiler_bin), "build", str(prepared.working_source)]
             completed = flow.runner(
-                command, env={**os.environ, "HOME": str(isolated_home)}, timeout=None)
+                command, env={**build_env, "HOME": str(isolated_home)}, timeout=None)
             if completed.returncode != 0:
                 tail = ((completed.stdout or "") + (completed.stderr or ""))[-800:]
                 raise BuildError("aot", f"the AOT compiler failed:\n{tail}")
@@ -97,7 +133,8 @@ def _obtain_locked(flow, prepared: PreparedGame, compiler_bin: Path, fingerprint
             cache_dir.mkdir(parents=True, exist_ok=True)
             _publish_atomic(built, cache_dir / f"{prepared.title_id}.dylib")
             manifest.write_text(json.dumps({
-                "format": "aot-cache-v1",
+                "format": AOT_CACHE_FORMAT,
+                "toolchain": toolchain,
                 "title_id": prepared.title_id,
                 "fingerprint": fingerprint_value,
                 "arch": platform.machine(),

@@ -352,3 +352,46 @@ class ErrorNormalizationTests(unittest.TestCase):
             ends = [event for event in events if event["ev"] == "stage_end"]
             self.assertTrue(ends and ends[-1]["ok"] is False)
 
+
+
+class AotFingerprintTests(unittest.TestCase):
+    def test_content_and_toolchain_invalidate_even_with_preserved_stat(self):
+        import os
+        from types import SimpleNamespace
+        from typing import cast
+        from dm.build.models import PreparedGame
+        from dm.build.aot import fingerprint
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            rom, tool = root / "rom", root / "tool"
+            rom.write_bytes(b"synthetic")
+            tool.write_bytes(b"aaaa")
+            prepared = cast(PreparedGame, SimpleNamespace(working_source=rom))
+            original = fingerprint(prepared, "host-hash", tool, {"args": []})
+            stamp = tool.stat()
+            tool.write_bytes(b"bbbb")
+            os.utime(tool, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+            changed = fingerprint(prepared, "host-hash", tool, {"args": []})
+            self.assertNotEqual(original, changed)
+            for identity in ({"args": ["-O2"]}, {"sdk_settings": {"version": "new"}}):
+                self.assertNotEqual(changed, fingerprint(prepared, "host-hash", tool, identity))
+
+    def test_resolved_compiler_and_sdk_are_pinned(self):
+        import os
+        from dm.build.aot import toolchain_identity
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            compiler = root / 'cc'
+            compiler.write_text('#!/bin/sh\nprintf "synthetic compiler v1\\n"\n')
+            compiler.chmod(0o755)
+            sdk = root / 'sdk'
+            sdk.mkdir()
+            settings = sdk / 'SDKSettings.json'
+            settings.write_text('{"Version":"1"}')
+            with patch.dict(os.environ, {'CC': f'{compiler} -O2', 'SDKROOT': str(sdk)}):
+                first, env = toolchain_identity()
+                self.assertEqual(env['CC'], f'{compiler.resolve()} -O2')
+                self.assertEqual(env['SDKROOT'], str(sdk.resolve()))
+                settings.write_text('{"Version":"2"}')
+                second, _ = toolchain_identity()
+                self.assertNotEqual(first, second)

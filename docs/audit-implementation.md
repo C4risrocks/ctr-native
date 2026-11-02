@@ -3,7 +3,8 @@
 > Historical record: measurements and completion claims below refer to their
 > original revisions. For current status see [the audit backlog](../PLAN_REFACTOR_PIPELINE.md)
 > and [development](development.md). Metal presentation now exists, while the
-> HardwareMetal raster and the documented P2 fixes remain pending.
+> HardwareMetal raster remains pending. P2-6/P2-7/P2-8 are fixed on `dev`;
+> P2-5 is fixed by S3; P2-9 remains open.
 
 Implemented against ctr-native baseline `8d3e87e`. Native delta: zakuro
 `8f21f68`, exported as patch 0012; upstream bases and expected patched trees

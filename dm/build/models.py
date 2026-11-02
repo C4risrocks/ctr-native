@@ -18,7 +18,7 @@ LANGUAGE_REGION = {
 }
 
 #: bumped whenever the on-disk AOT cache layout changes meaning.
-AOT_CACHE_FORMAT = "aot-cache-v1"
+AOT_CACHE_FORMAT = "aot-cache-v2"
 
 
 @dataclass(frozen=True)

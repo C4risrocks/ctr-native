@@ -1,8 +1,9 @@
 # zakuro-macOS — estado del port (Fases 0–6 completadas)
 
 > Auditoría vigente: la presentación Metal sigue siendo experimental. La
-> reutilización de texturas y la entrega bloqueante son P2 abiertos; los KPI
-> de sesiones no los cierran. Consulta [el backlog](../PLAN_REFACTOR_PIPELINE.md).
+> sincronización de texturas y la entrega no bloqueante están corregidas en
+> `dev` (0020). HardwareMetal y el overlay siguen pendientes; los KPI
+> históricos no validan esas integraciones. Consulta [el backlog](../PLAN_REFACTOR_PIPELINE.md).
 
 Fork base: [fearkov/zakuro](https://github.com/fearkov/zakuro) + [3dsrecomp](https://github.com/fearkov/3dsrecomp) (MIT).
 Clones de trabajo: `vendors/zakuro`, `vendors/3dsrecomp` (zakuro lleva un parche

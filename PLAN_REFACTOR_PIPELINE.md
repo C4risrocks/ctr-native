@@ -4,10 +4,11 @@
 
 La implementación inicial se integró desde `refactor/pipeline` (`7cb83b0`,
 `9a029b7`). La auditoría posterior identificó nueve hallazgos: cuatro P1
-corregidos en `ca51d6a` y `725bb82`, y cinco P2 abiertos, incluido uno parcial.
+corregidos en `ca51d6a` y `725bb82`. En `dev`, P2-6/P2-7/P2-8 están
+corregidos; P2-5 corregido en S3; P2-9 sigue pendiente.
 La tabla de auditoría al final es la referencia de sus estados.
 
-Validación del cierre P1: 77 pruebas Python (P2-9 sigue omitiendo una), Ruff,
+Validación posterior en `dev`: 77 pruebas Python (P2-9 sigue omitiendo una), Ruff,
 Pyright y bootstrap local y desde clones nuevos correctos. Los resultados
 históricos no implican cierre de los pendientes ni validación de otra edición.
 Las secciones de diseño siguientes conservan el objetivo; los detalles aún no
@@ -115,10 +116,10 @@ El refactor estará aceptado cuando un título nuevo pueda recorrer el flujo com
 | 2. Metadatos antiguos tras descifrar | P1 | Corregido: nuevo PreparedGame con partición analizada |
 | 3. Selección AOT sin validar contenido/procedencia | P1 | Corregido: manifiesto y SHA-256 verificados; se empaqueta la caché, no la librería global |
 | 4. Fork irreproducible: parche 0019 y lock | P1 | Corregido: exportado f7c8e6f como 0018a; lock actualizado; bootstrap nuevo verificado |
-| 5. Huella AOT incompleta | P2 | Pendiente |
-| 6. Errores y cierre de etapas JSON | P2 | Completo (branch `dev`): fallos inesperados se normalizan a `BuildError("pipeline", ...)` con `stage_end(ok:false)` del stage abierto; el JSON contrataja un único `ev:error` gestructurado (`kind`, `stage`, `traceback` solo en inesperados); tests incluidos |
+| 5. Huella AOT incompleta | P2 | Corregido en dev: caché v2 con SHA-256 de ROM, host y recompilador; compilador C resuelto, hash, versión, argumentos y SDK registrados y fijados en el entorno de ejecución |
+| 6. Errores y cierre de etapas JSON | P2 | Completo (branch `dev`): fallos inesperados se normalizan a `BuildError("pipeline", ...)` con `stage_end(ok:false)` del stage abierto; el JSON contiene un único `ev:error` estructurado (`kind`, `stage`, `traceback` solo en inesperados); tests incluidos |
 | 7. Sincronización de texturas Metal | P2 | Corregido (branch `dev`): tres sets round-robin + `waitUntilCompleted` del job que muestreó el set antes de reusarlo |
-| 8. Canal Metal bloqueante | P2 | Corregido (branch `dev`): el present entra por `try_send` — el loop suelta el frame si el worker va a la zaga; contadད y logueado |
+| 8. Canal Metal bloqueante | P2 | Corregido (branch `dev`): el present entra por `try_send` — el loop suelta el frame si el worker va a la zaga; contado y registrado |
 | 9. Integración real 3dsrecomp omitida | P2 | Pendiente |
 
 Esta entrega se limita a P1-1 y P1-2. Conserva ROM original, preparada,
@@ -152,10 +153,37 @@ registrada en P2-9), Ruff, Pyright y bootstrap local y desde clones nuevos corre
 - S2: CI habilitado para dev y compilación de tests con Metal; los tests
   que requieren GPU física deben ejecutarse localmente y no contarse como
   validados por compilar en un runner sin GPU.
-- Pendientes de esta ampliación: S3 huella AOT v2, S4 integración real
+- Pendientes de esta ampliación: S4 integración real
   obligatoria, conexión completa M1.1, batches/presentación directa y M2.1.
 - Se conserva Vulkan por defecto. El cierre de M1.1 exige paridad y >=85%
   del throughput Vulkan, con benchmark controlado y validación de usuario.
 
 Validación S1/S2: suites nativas default y Metal correctas; bootstrap local
-y reconstrucción desde clones nuevos correctos. S3/S4/M1.1/M2.1 no están cerrados.
+y reconstrucción desde clones nuevos correctos. S4/M1.1/M2.1 no están cerrados.
+
+### Estado documental e higiene — 2026-11-02
+
+Referencia de esta revisión: `dev` en `d3225d2`. Validación local registrada:
+483 pruebas nativas sin Metal y 495 con Metal; CI compila los tests Metal,
+sin acreditar ejecución con GPU. Vulkan permanece por defecto.
+
+Revisión de higiene: árbol limpio antes de esta actualización, 49 enlaces locales
+válidos y ningún artefacto generado ni nombre sensible detectado entre los
+archivos versionados. La automatización de higiene en CI sigue pendiente.
+Estas comprobaciones no equivalen a una auditoría de secretos del historial.
+
+La documentación conserva los resultados históricos con sus fechas y separa
+el estado actual de sus mediciones. La entrega S3 incluye la publicación de `dev`; no integra la rama en `master`.
+
+### S3 — huella AOT v2 implementada
+
+La caché identifica el contenido de ROM, host y recompilador mediante SHA-256.
+El compilador C se resuelve una vez y se fija mediante CC; su contenido,
+versión y argumentos entran en la huella. SDKROOT se fija al SDK seleccionado
+(explícito o xcrun en macOS), con hash de SDKSettings y entorno relevante.
+Las entradas v1 quedan conservadas y no se reutilizan. Los SDK deben mantenerse
+inmutables: no se calcula un hash de cada header o biblioteca del SDK.
+P2-9, HardwareMetal y overlay siguen pendientes.
+
+Validación S3: 79 pruebas Python ejecutadas (una omitida por P2-9),
+Ruff y Pyright correctos; diff sin errores de espacios.

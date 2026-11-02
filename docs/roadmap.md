@@ -1,10 +1,10 @@
 # Roadmap F7–F8 (pendientes y decisiones)
 
-## Estado actual — 2026-11-01
+## Estado actual — 2026-11-02 (dev en d3225d2)
 
 - Pipeline común de ocho etapas; AOT automática desde caché validada.
 - P1-1/P1-2 corregidos en `ca51d6a`; P1-3/P1-4 en `725bb82`.
-- Los cinco P2 conservan su detalle y estado en el [plan del refactor](../PLAN_REFACTOR_PIPELINE.md).
+- P2-6/P2-7/P2-8 corregidos en `dev`; P2-5 corregido (S3); P2-9 pendiente. Detalle en el [plan del refactor](../PLAN_REFACTOR_PIPELINE.md).
 - Majora USA validada; objetivo EUR pendiente en su [plan](../PLAN_MAJORAS_MASK_3D.md).
 - Metal: presentación experimental con raster software; HardwareMetal y overlays
   pendientes. Consultar [plan Metal](plan-metal.md).
@@ -18,7 +18,7 @@
 > Registro histórico: las mediciones y cierres se refieren a sus revisiones
 > originales. El estado vigente está en [el backlog](../PLAN_REFACTOR_PIPELINE.md)
 > y [development.md](development.md). La presentación Metal ya existe; el raster
-> HardwareMetal y las correcciones P2 documentadas siguen pendientes.
+> HardwareMetal sigue pendiente; P2-6/P2-7/P2-8 están corregidos en `dev`.
 
 Este archivo persiste el plan en el repo para retomar sesiones futuras sin
 perder hilo. El estado de partida es la rama `master` con el port zakuro F0–F6
