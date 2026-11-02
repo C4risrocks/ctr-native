@@ -1,0 +1,39 @@
+From 65e9955dd1735f4731a082404fd2153419ccc280 Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 12:52:57 -0600
+Subject: [PATCH] raster: the Resources grows its Metal host slot - with_hosts
+ builds it
+
+---
+ crates/zakuro-gpu/src/raster.rs | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/crates/zakuro-gpu/src/raster.rs b/crates/zakuro-gpu/src/raster.rs
+index f3a8c78..1fa813f 100644
+--- a/crates/zakuro-gpu/src/raster.rs
++++ b/crates/zakuro-gpu/src/raster.rs
+@@ -1561,6 +1561,21 @@ pub struct Resources {
+     /// the host GPU, when draws go to it rather than to the software path.
+     #[cfg(feature = "vulkan")]
+     pub(crate) hardware: Option<hardware::Hardware>,
++    /// the Metal host, the A4's native raster when the render asks for it.
++    #[cfg(all(feature = "metal", target_os = "macos"))]
++    pub(crate) metal_hardware: Option<metal_hardware::HardwareMetal>,
++}
++
++impl Resources {
++    /// the defaults, with the Metal host set when the crate carries it.
++    pub fn with_hosts() -> Self {
++        let mut resources = Self::default();
++        #[cfg(all(feature = "metal", target_os = "macos"))]
++        {
++            resources.metal_hardware = metal_hardware::HardwareMetal::new().ok();
++        }
++        resources
++    }
+ }
+ 
+ impl Resources {
+-- 
+2.56.0
+
