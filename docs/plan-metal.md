@@ -3,8 +3,8 @@
 > Auditoría vigente: la presentación Metal sigue siendo experimental. Los
 > P2-7 (sincronización de texturas) y P2-8 (canal bloqueante) están
 > corregidos en `dev` y quedan verificados por smoke (parche 0020);
-> P2-5 está corregido mediante S3; queda abierto P2-9 (integración real de
-> 3dsrecomp). Consulta [el backlog](../PLAN_REFACTOR_PIPELINE.md).
+> P2-5 está corregido mediante S3; P2-9 está corregido mediante S4 (integración real de
+> 3dsrecomp obligatoria en CI). Consulta [el backlog](../PLAN_REFACTOR_PIPELINE.md).
 
 ## Estado (2026-11-01) — M0 ✅ **ejecutado y merged a master**
 

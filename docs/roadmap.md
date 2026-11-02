@@ -4,7 +4,7 @@
 
 - Pipeline común de ocho etapas; AOT automática desde caché validada.
 - P1-1/P1-2 corregidos en `ca51d6a`; P1-3/P1-4 en `725bb82`.
-- P2-6/P2-7/P2-8 corregidos en `dev`; P2-5 corregido (S3); P2-9 pendiente. Detalle en el [plan del refactor](../PLAN_REFACTOR_PIPELINE.md).
+- P2-6/P2-7/P2-8 corregidos en `dev`; P2-5 corregido (S3); P2-9 corregido (S4). Detalle en el [plan del refactor](../PLAN_REFACTOR_PIPELINE.md).
 - Majora USA validada; objetivo EUR pendiente en su [plan](../PLAN_MAJORAS_MASK_3D.md).
 - Metal: presentación experimental con raster software; HardwareMetal y overlays
   pendientes. Consultar [plan Metal](plan-metal.md).

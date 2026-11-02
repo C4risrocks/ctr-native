@@ -61,3 +61,23 @@ jobs:
           else
             cargo +1.99.1 test --locked --workspace
           fi
+
+  real-aot-integration:
+    runs-on: macos-latest
+    env:
+      CTR_REQUIRE_REAL_AOT: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: synthetic test dependencies
+        run: python3 -m pip install cryptography
+      - name: reconstruct exact native fork trees
+        run: python3 scripts/bootstrap_vendors.py
+      - name: install pinned compiler
+        run: rustup toolchain install 1.99.1 --profile minimal
+      - name: build real recompiler
+        run: cargo +1.99.1 build --release --locked --manifest-path vendors/3dsrecomp/Cargo.toml
+      - name: required synthetic ROM to native library to bundle
+        run: python3 -m unittest dm.tests.t_build.PipelineTests.test_real_3dsrecomp_integration_when_available -v

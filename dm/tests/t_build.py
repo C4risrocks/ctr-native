@@ -259,22 +259,37 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(initial.working_source.resolve(), rom.resolve())
 
     def test_real_3dsrecomp_integration_when_available(self):
-        root = Path(__file__).resolve().parent.parent
+        import hashlib
+        import os
+        root = Path(__file__).resolve().parents[2]
         compiler = root / "vendors/3dsrecomp/target/release/3dsrecomp"
         if not compiler.is_file():
+            if os.environ.get("CTR_REQUIRE_REAL_AOT") == "1":
+                self.fail(f"required recompiler missing: {compiler}")
             self.skipTest("3dsrecomp is not built in vendors/")
         with TemporaryDirectory() as folder:
             work = Path(folder)
             make_stub_tools(work)
-            rom = build_card_image(build_cxi_partition(), work / "synthetic.3ds")
-            try:
-                result = self.build_once(rom, work, work / "home",
-                                         recompiler_bin=compiler)
-            except Exception as error:  # the synthetic rom is not a real title
-                self.skipTest(f"3dsrecomp rejected the synthetic title: {error}")
-            self.assertTrue(result.aot.dylib.is_file())
-            manifest = next(iter((result.aot.dylib.parent.parent / "aot").glob("*")))
-            self.assertIn("fingerprint", json.loads((manifest / "manifest.json").read_text()))
+            # ARM: mov r0, #0; bx lr. ExHeader text segment at 0x00100000.
+            code = struct.pack("<II", 0xE3A00000, 0xE12FFF1E)
+            partition = bytearray(build_cxi_partition(
+                program_id=0x000400000FF3DE00, code=code))
+            struct.pack_into("<III", partition, 0x210, 0x00100000, 1, len(code))
+            rom = build_card_image(bytes(partition), work / "synthetic.3ds")
+            result = self.build_once(rom, work, work / "home", recompiler_bin=compiler)
+            library = result.aot.dylib
+            self.assertTrue(library.is_file())
+            manifest = json.loads((library.parent / "manifest.json").read_text())
+            self.assertEqual(manifest["fingerprint"], result.aot.fingerprint)
+            self.assertEqual(manifest["title_id"], result.title_id)
+            self.assertEqual(manifest["library_sha256"], hashlib.sha256(library.read_bytes()).hexdigest())
+            self.assertTrue(result.aot.compiled)
+            self.assertFalse(result.aot.reused)
+            self.assertIn(library.read_bytes()[:4], (b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf"))
+            bundled = list((result.app / "Contents/Resources").rglob(f"{result.title_id}.dylib"))
+            self.assertEqual(len(bundled), 1)
+            self.assertEqual(bundled[0].read_bytes(), library.read_bytes())
+
 
 
 def _quiet():
@@ -395,3 +410,14 @@ class AotFingerprintTests(unittest.TestCase):
                 settings.write_text('{"Version":"2"}')
                 second, _ = toolchain_identity()
                 self.assertNotEqual(first, second)
+
+
+class RealAotRequirementTests(unittest.TestCase):
+    def test_missing_tool_fails_when_required_and_skips_only_locally(self):
+        import os
+        case = PipelineTests('test_real_3dsrecomp_integration_when_available')
+        with patch.object(Path, 'is_file', return_value=False):
+            with patch.dict(os.environ, {'CTR_REQUIRE_REAL_AOT': '1'}), self.assertRaises(AssertionError):
+                case.test_real_3dsrecomp_integration_when_available()
+            with patch.dict(os.environ, {'CTR_REQUIRE_REAL_AOT': '0'}), self.assertRaises(unittest.SkipTest):
+                case.test_real_3dsrecomp_integration_when_available()

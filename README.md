@@ -86,7 +86,7 @@ own licenses; the knowledge base is 3dbrew/GBATEK-format documentation.
 
 The four high-priority findings are fixed through `725bb82`. On `dev`, P2-6 (error normalization), P2-7 (Metal texture synchronization)
 and P2-8 (nonblocking Metal delivery) are fixed. P2-5 (toolchain fingerprinting) is fixed by S3.
-P2-9 (real recompiler integration) remains open.
+P2-9 (real recompiler integration) is fixed by S4; all five P2 findings are corrected on `dev`.
 See [the audit backlog](PLAN_REFACTOR_PIPELINE.md#auditoría-2026-11-01-sobre-be10b73)
 and [the current roadmap](docs/roadmap.md). A successful synthetic smoke does
 not certify game compatibility or close these findings.

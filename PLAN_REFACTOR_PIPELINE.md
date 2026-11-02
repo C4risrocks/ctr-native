@@ -5,10 +5,10 @@
 La implementación inicial se integró desde `refactor/pipeline` (`7cb83b0`,
 `9a029b7`). La auditoría posterior identificó nueve hallazgos: cuatro P1
 corregidos en `ca51d6a` y `725bb82`. En `dev`, P2-6/P2-7/P2-8 están
-corregidos; P2-5 corregido en S3; P2-9 sigue pendiente.
+corregidos; P2-5 corregido en S3; P2-9 corregido en S4.
 La tabla de auditoría al final es la referencia de sus estados.
 
-Validación posterior en `dev`: 77 pruebas Python (P2-9 sigue omitiendo una), Ruff,
+Validación histórica anterior a S4: 77 pruebas Python (una omitida entonces), Ruff,
 Pyright y bootstrap local y desde clones nuevos correctos. Los resultados
 históricos no implican cierre de los pendientes ni validación de otra edición.
 Las secciones de diseño siguientes conservan el objetivo; los detalles aún no
@@ -120,7 +120,7 @@ El refactor estará aceptado cuando un título nuevo pueda recorrer el flujo com
 | 6. Errores y cierre de etapas JSON | P2 | Completo (branch `dev`): fallos inesperados se normalizan a `BuildError("pipeline", ...)` con `stage_end(ok:false)` del stage abierto; el JSON contiene un único `ev:error` estructurado (`kind`, `stage`, `traceback` solo en inesperados); tests incluidos |
 | 7. Sincronización de texturas Metal | P2 | Corregido (branch `dev`): tres sets round-robin + `waitUntilCompleted` del job que muestreó el set antes de reusarlo |
 | 8. Canal Metal bloqueante | P2 | Corregido (branch `dev`): el present entra por `try_send` — el loop suelta el frame si el worker va a la zaga; contado y registrado |
-| 9. Integración real 3dsrecomp omitida | P2 | Pendiente |
+| 9. Integración real 3dsrecomp omitida | P2 | Corregido en S4: ARM sintético válido, raíz correcta, fallos sin skip y job macOS obligatorio |
 
 Esta entrega se limita a P1-1 y P1-2. Conserva ROM original, preparada,
 caché AOT, logs y sandbox. La preparación devuelve un estado nuevo y valida
@@ -153,13 +153,12 @@ registrada en P2-9), Ruff, Pyright y bootstrap local y desde clones nuevos corre
 - S2: CI habilitado para dev y compilación de tests con Metal; los tests
   que requieren GPU física deben ejecutarse localmente y no contarse como
   validados por compilar en un runner sin GPU.
-- Pendientes de esta ampliación: S4 integración real
-  obligatoria, conexión completa M1.1, batches/presentación directa y M2.1.
+- Pendientes de esta ampliación: conexión completa M1.1, batches/presentación directa y M2.1.
 - Se conserva Vulkan por defecto. El cierre de M1.1 exige paridad y >=85%
   del throughput Vulkan, con benchmark controlado y validación de usuario.
 
 Validación S1/S2: suites nativas default y Metal correctas; bootstrap local
-y reconstrucción desde clones nuevos correctos. S4/M1.1/M2.1 no están cerrados.
+y reconstrucción desde clones nuevos correctos. M1.1/M2.1 no están cerrados.
 
 ### Estado documental e higiene — 2026-11-02
 
@@ -183,7 +182,27 @@ versión y argumentos entran en la huella. SDKROOT se fija al SDK seleccionado
 (explícito o xcrun en macOS), con hash de SDKSettings y entorno relevante.
 Las entradas v1 quedan conservadas y no se reutilizan. Los SDK deben mantenerse
 inmutables: no se calcula un hash de cada header o biblioteca del SDK.
-P2-9, HardwareMetal y overlay siguen pendientes.
+S4 corrige posteriormente P2-9; HardwareMetal y overlay siguen pendientes.
 
 Validación S3: 79 pruebas Python ejecutadas (una omitida por P2-9),
 Ruff y Pyright correctos; diff sin errores de espacios.
+
+### S4 — integración real obligatoria
+
+La prueba resuelve el binario desde la raíz correcta y fabrica un NCSD/NCCH
+con dos instrucciones ARM y segmento de texto válido en ExHeader. Compila
+con 3dsrecomp real y verifica identidad, huella, hash, cabecera Mach-O y
+los bytes de la biblioteca empaquetada. Ningún fallo de compilación se omite.
+
+Localmente solo se omite si falta el binario. Con CTR_REQUIRE_REAL_AOT=1
+la ausencia falla; el job real-aot-integration de macOS reconstruye los vendors,
+compila 3dsrecomp y ejecuta esa prueba con dicha variable. El job es parte
+del workflow; exigirlo mediante protección de rama requiere configuración
+del repositorio y no se presupone aquí. No utiliza ROMs ni claves reales.
+
+Los cuatro P1 y cinco P2 de esta auditoría están corregidos en dev.
+HardwareMetal M1.1, overlay M2.1 y automatización de higiene siguen pendientes.
+
+Validación S4 local: 80 pruebas Python, sin omisiones, con
+CTR_REQUIRE_REAL_AOT=1; Ruff y Pyright correctos, 49 enlaces locales válidos
+y git diff --check limpio. El resultado remoto de CI se verifica por separado.

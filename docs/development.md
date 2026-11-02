@@ -171,7 +171,20 @@ Old v1 entries remain on disk but are not reused.
 The four P1 fixes are recorded in `ca51d6a` and `725bb82`. The authoritative
 [audit backlog](../PLAN_REFACTOR_PIPELINE.md#auditoría-2026-11-01-sobre-be10b73)
 records P2-6 (structured pipeline failures), P2-7 (Metal texture synchronization)
-and P2-8 (nonblocking frame delivery) as fixed on `dev`. P2-5 is fixed by S3; P2-9 (real recompiler integration) remains open.
+and P2-8 (nonblocking frame delivery) as fixed on `dev`. P2-5 is fixed by S3; P2-9 (real recompiler integration) is fixed by S4; all five P2 findings are corrected on `dev`.
 Native patches extend through 0036, including 0018a; the lock covers the resulting tree.
 Local native suites passed 483 tests without Metal and 495 with Metal. CI runs
 the default suite and compiles Metal tests with `--no-run`; GPU execution is local.
+
+### Required real AOT integration (S4)
+
+Build the locked release recompiler, then run:
+
+```sh
+CTR_REQUIRE_REAL_AOT=1 python3 -m unittest dm.tests.t_build.PipelineTests.test_real_3dsrecomp_integration_when_available -v
+```
+
+The macOS `real-aot-integration` CI job performs these steps with a manufactured
+ARM ROM. Missing tools and compiler failures fail this job. Ordinary local
+discovery may skip only when the recompiler binary is absent. This checks
+compilation and bundled library bytes, not runtime/game compatibility.
