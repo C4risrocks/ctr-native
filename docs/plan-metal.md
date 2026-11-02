@@ -188,3 +188,12 @@ solo caminos que Metal demostró dibujar en esta máquina.
   (`setAllowGPUOptimizedContents(false)` + StorageMode Managed) ya está en
   el MetalPresenter del fork — el upload por frame termina en 1600-byte
   rows lineales.
+
+## H1 — estado PICA compartido, parche 0040
+
+Uniformes de 408 words, tablas y descripción de filtrado se extraen a
+raster/pica_state.rs; Vulkan usa el empaquetado común y la prueba GPU Metal
+consume uniformes generados desde registros. El constructor Metal parcial
+se elimina. Ver el seguimiento H1–H7 en el plan raíz: H2 samplers/recursos,
+H3 estado completo, H4 coherencia, H5 despacho, H6 batching/presentación
+y H7 validación siguen pendientes. M1.1 y M2.1 permanecen abiertos.

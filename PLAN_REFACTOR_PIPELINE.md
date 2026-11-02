@@ -268,3 +268,32 @@ batching y presentación compartida. No se acredita jugabilidad ni rendimiento.
 Validación 0039: 483 pruebas default y 496 Metal correctas, tres ignoradas
 habituales por suite; prueba GPU focalizada repetida sobre el árbol final;
 bootstrap local y desde clones nuevos correcto; diff sin errores de espacios.
+
+## Plan PICA → Metal — seguimiento por hitos
+
+| Hito | Entrega y aceptación | Estado |
+|---|---|---|
+| H1 | Estado común: uniformes std140 de 408 words, tablas y Filtering; regresiones Vulkan/Metal | Implementado en 0040 |
+| H2 | Texturas/mipmaps y samplers desde PICA, identidad propietaria e invalidación | Pendiente |
+| H3 | Especialización de fragmentos, depth/stencil, blend, viewport/scissor y pipelines cacheados | Pendiente |
+| H4 | Superficies coherentes, fills/transfers, sync CPU, solapamientos y savestates | Pendiente |
+| H5 | Selección explícita del backend y despacho real desde carga del título y rasterize | Pendiente |
+| H6 | Contexto compartido, batching y presentación directa a ambas ventanas | Pendiente |
+| H7 | Paridad, sesiones y benchmark Metal >=85% Vulkan; regresión Vulkan <=5% | Pendiente |
+
+Orden H1→H2→H3→H4→H5→H6→H7; cada hito requiere pruebas, parche, lock,
+reconstrucción limpia, documentación y publicación en dev. Vulkan sigue por
+defecto; vértices CPU para la primera integración. Overlay M2.1 separado.
+
+### H1 — estado común PICA (0040)
+
+El módulo pica_state comparte el bloque Draw completo, el empaquetado de
+lighting/procedural/fog y Filtering con Vulkan. Metal elimina su constructor
+parcial de dos unidades y la prueba GPU obtiene uniformes desde registros
+mediante el mismo constructor. Los samplers Metal efectivos llegan en H2.
+Una fixture comprueba offsets, tres unidades, profundidad, padding y fog.
+La asignación temporal al empaquetar tablas se mide junto al rendimiento
+en H7; no se presume cumplimiento del presupuesto por pasar los tests.
+
+Validación H1: 484 pruebas default y 497 Metal correctas (tres ignoradas
+habituales por suite); bootstrap local y desde clones nuevos verificado.

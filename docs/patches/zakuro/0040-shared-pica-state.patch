@@ -1,0 +1,349 @@
+From 1ba4c5c807d5b170ad54fa64020c80142a9c7144 Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 14:17:22 -0600
+Subject: [PATCH] refactor: share PICA draw packing tables and filtering across
+ GPU backends
+
+---
+ crates/zakuro-gpu/src/raster.rs               |   2 +
+ crates/zakuro-gpu/src/raster/hardware.rs      |  99 +---------------
+ .../zakuro-gpu/src/raster/metal_hardware.rs   |  37 ++----
+ crates/zakuro-gpu/src/raster/pica_state.rs    | 111 ++++++++++++++++++
+ 4 files changed, 127 insertions(+), 122 deletions(-)
+ create mode 100644 crates/zakuro-gpu/src/raster/pica_state.rs
+
+diff --git a/crates/zakuro-gpu/src/raster.rs b/crates/zakuro-gpu/src/raster.rs
+index 3b6ceb7..d22e820 100644
+--- a/crates/zakuro-gpu/src/raster.rs
++++ b/crates/zakuro-gpu/src/raster.rs
+@@ -11,6 +11,8 @@ use crate::lighting::{Lighting, Tables};
+ 
+ #[cfg(feature = "vulkan")]
+ pub(crate) mod hardware;
++#[cfg(any(feature = "vulkan", all(feature = "metal", target_os = "macos")))]
++mod pica_state;
+ #[cfg(all(feature = "metal", target_os = "macos"))]
+ pub mod metal_hardware;
+ 
+diff --git a/crates/zakuro-gpu/src/raster/hardware.rs b/crates/zakuro-gpu/src/raster/hardware.rs
+index 2f08814..2086bab 100644
+--- a/crates/zakuro-gpu/src/raster/hardware.rs
++++ b/crates/zakuro-gpu/src/raster/hardware.rs
+@@ -22,6 +22,7 @@ use std::thread;
+ 
+ use ash::vk;
+ 
++use super::pica_state::Filtering;
+ use super::{BoundTexture, DepthMap, DrawnTexture, Pass, Screen, Wrap, TEXTURE_UNIT_BASES};
+ use crate::blend::LogicOp;
+ use crate::fog;
+@@ -812,58 +813,6 @@ impl Replaced {
+     }
+ }
+ 
+-/// how a sampler filters and wraps, and goes between an image's sizes.
+-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+-struct Filtering {
+-    /// bilinear rather than point sampling, magnifying and minifying.
+-    magnify: bool,
+-    minify: bool,
+-    /// blends the two sizes about the level of detail rather than taking
+-    /// the nearer.
+-    between: bool,
+-    s: Wrap,
+-    t: Wrap,
+-    /// the levels of detail it is kept between, see Lod, and its bias in
+-    /// 256ths.
+-    levels: (u8, u8),
+-    bias: i16,
+-}
+-
+-impl Filtering {
+-    /// a unit's, for its texture's sizes.
+-    fn of(bound: &BoundTexture) -> Filtering {
+-        let lod = bound.lod;
+-        match bound.levels {
+-            // one size is only ever magnified
+-            1 => Filtering { minify: bound.linear, between: false, levels: (0, 0), bias: 0, ..Filtering::wrapping(bound) },
+-            _ => Filtering { minify: lod.linear, between: lod.between, levels: (lod.min, lod.max), bias: lod.bias, ..Filtering::wrapping(bound) },
+-        }
+-    }
+-
+-    /// for a texture pack's picture, going between its sizes down to
+-    /// smallest, a little sharper than the rate the coordinates change
+-    /// gives, so that one drawn a little smaller than its own size, as at 3
+-    /// times the console's resolution, stays as sharp as it is.
+-    fn picture(bound: &BoundTexture, smallest: u32) -> Filtering {
+-        Filtering {
+-            minify: bound.linear,
+-            between: smallest > 0 && bound.linear,
+-            levels: (0, smallest as u8),
+-            bias: if smallest > 0 { -128 } else { 0 },
+-            ..Filtering::wrapping(bound)
+-        }
+-    }
+-
+-    /// the unit's magnifying filter and wrapping, one size of its texture.
+-    fn wrapping(bound: &BoundTexture) -> Filtering {
+-        Filtering { s: bound.wrap_s, t: bound.wrap_t, magnify: bound.linear, ..Filtering::OFF }
+-    }
+-
+-    /// what a unit that is off samples with.
+-    const OFF: Filtering =
+-        Filtering { magnify: false, minify: false, between: false, s: Wrap::ClampToEdge, t: Wrap::ClampToEdge, levels: (0, 0), bias: 0 };
+-}
+-
+ /// how long a batch spends uploading texture pack pictures, and how many
+ /// bytes of them it uploads, past the first picture, so that a scene's
+ /// pictures coming in at once are spread over a few frames rather than hold
+@@ -2905,23 +2854,10 @@ impl Hardware {
+         }
+         let offset = self.stage(TABLES_SIZE, self.storage_alignment)?;
+         let staging = self.ring(offset, TABLES_SIZE);
+-        let (colors, steps) = procedural.colors();
+-        // a plain loop over each, which goes as fast as copying, a chain of
+-        // flattened iterators took a quarter of a frame
+-        let parts = [
+-            tables.entries().as_flattened().as_flattened(),
+-            procedural.maps().as_flattened().as_flattened(),
+-            colors.as_flattened(),
+-            steps.as_flattened(),
+-            fog.entries().as_flattened(),
+-        ];
+-        let mut out = staging.as_chunks_mut::<4>().0;
+-        for part in parts {
+-            let (here, rest) = out.split_at_mut(part.len());
+-            for (bytes, value) in here.iter_mut().zip(part) {
+-                *bytes = value.to_le_bytes();
+-            }
+-            out = rest;
++        let mut packed = Vec::new();
++        super::pica_state::table_words(&mut packed, tables, procedural, fog);
++        for (bytes, word) in staging.as_chunks_mut::<4>().0.iter_mut().zip(packed) {
++            *bytes = word.to_le_bytes();
+         }
+         self.tables = Some((generation, offset));
+         Ok(offset)
+@@ -3666,15 +3602,7 @@ impl Hardware {
+         let r = draw.registers;
+         let mut block = std::mem::take(&mut self.uniforms);
+         let words = &mut block.words;
+-        words.clear();
+-        for base in STAGE_REGISTERS {
+-            words.extend([r[base], r[base + 1], r[base + 2], r[base + 3], r[base + 4], 0, 0, 0]);
+-        }
+         let texture_config = (r[REG_TEXTURE_CONFIG] & !7) | enabled;
+-        words.extend([r[REG_UPDATE_BUFFER], r[REG_BUFFER_COLOR], r[REG_ALPHA_TEST], texture_config]);
+-        for base in TEXTURE_UNIT_BASES {
+-            words.extend([r[base + 2], r[base], 0, 0]);
+-        }
+         let depth_flags = depth_map.w_buffer as u32 | (shaded.is_some() as u32) << 1;
+         // the depth map goes through the viewport where it fits, and what
+         // the CPU placed carries its depth in its position, so the fragment
+@@ -3688,22 +3616,7 @@ impl Hardware {
+             Geometry::Shaded(_) if [mapped.0, mapped.1].iter().all(|d| (0.0..=1.0).contains(d)) => (false, mapped),
+             Geometry::Shaded(_) => (true, (0.0, 1.0)),
+         };
+-        words.extend([depth_flags, draw.lighting.is_some() as u32, depth_map.scale.to_bits(), depth_map.offset.to_bits()]);
+-        match draw.lighting {
+-            Some(lighting) => lighting.pack(words),
+-            None => words.resize(UNIFORM_WORDS - PROCTEX_WORDS - FOG_WORDS, 0),
+-        }
+-        let procedural = [
+-            proctex::REG_CONFIG,
+-            proctex::REG_CONFIG + 1,
+-            proctex::REG_CONFIG + 2,
+-            proctex::REG_CONFIG + 3,
+-            proctex::REG_CONFIG + 4,
+-            proctex::REG_CONFIG + 5,
+-        ];
+-        words.extend(procedural.map(|register| r[register]));
+-        words.extend([0, 0]);
+-        words.extend([r[fog::REG_COLOR], 0, 0, 0]);
++        super::pica_state::draw_uniform_block(words, r, texture_config, depth_flags, depth_map, draw.lighting);
+         let uniform_offset = self.stage_block(&mut block, UNIFORM_SIZE, self.uniform_alignment);
+         self.uniforms = block;
+         let uniform_offset = uniform_offset?;
+diff --git a/crates/zakuro-gpu/src/raster/metal_hardware.rs b/crates/zakuro-gpu/src/raster/metal_hardware.rs
+index 340eb82..b5ff329 100644
+--- a/crates/zakuro-gpu/src/raster/metal_hardware.rs
++++ b/crates/zakuro-gpu/src/raster/metal_hardware.rs
+@@ -854,29 +854,7 @@ impl Ring {
+     }
+ }
+ 
+-/// the Draw block's words a draw carries, from the registers' words the
+-/// Vulkan raster fills: the stage registers' pairs, the buffer-update,
+-/// buffer-color, alpha-test and texture-config, the texture units' words,
+-/// the depth-map flags. `STAGE_REGISTERS` stays hardware.rs's — the metal
+-/// module reads the same decode through the shared host.
+-#[cfg(all(target_os = "macos", feature = "metal"))]
+-pub(crate) fn draw_uniform_block(
+-    registers: &[u32],
+-    texture_config: u32,
+-    depth_flags: u32,
+-) -> Vec<u32> {
+-    let mut block = Vec::with_capacity(1504 / 4);
+-    for base in [0x0C0usize, 0x0C8, 0x0D0, 0x0D8, 0x0F0, 0x0F8] {
+-        block.extend([registers[base], registers[base + 1], registers[base + 2], registers[base + 3], registers[base + 4], 0, 0, 0]);
+-    }
+-    block.extend([registers[0x0E0], registers[0x0FD], registers[0x0A0], texture_config]);
+-    for base in [0x0E8usize, 0x0F4usize] {
+-        // the texture units' blocks: the configuration and the border color
+-        block.extend([registers[base + 2], registers[base], 0, 0]);
+-    }
+-    block.extend([depth_flags, 0]);
+-    block
+-}
++pub(crate) use super::pica_state::draw_uniform_block;
+ 
+ /// One explicit texture/sampler pair; the caller owns filtering and wrapping.
+ #[cfg(all(target_os = "macos", feature = "metal"))]
+@@ -929,7 +907,7 @@ impl HardwareMetal {
+         if key.depth != draw.depth.is_some() {
+             return Err("Metal depth attachment does not match pipeline key".into());
+         }
+-        if uniforms_words.len() < 408 {
++        if uniforms_words.len() < super::pica_state::DRAW_WORDS {
+             return Err("Metal Draw uniform block is truncated".into());
+         }
+         for unit in 0..3 {
+@@ -2158,12 +2136,13 @@ mod tests {
+ 
+         // the uniforms: the six pass-through stages, the words exactly as
+         // the draw's registers carry them
+-        let mut uniform_words = [0u32; 408];
+-        for stage in 0..6 {
+-            let at = stage * 4;
+-            uniform_words[at] = 0x000F_000F;
+-            uniform_words[at + 2] = 0x000F_000F;
++        let mut registers = vec![0u32; 0x300];
++        for base in [0x0C0, 0x0C8, 0x0D0, 0x0D8, 0x0F0, 0x0F8] {
++            registers[base] = 0x000F_000F;
+         }
++        let mut uniform_words = Vec::new();
++        draw_uniform_block(&mut uniform_words, &registers, 0, 0,
++            super::super::DepthMap { scale: 1.0, offset: 0.0, w_buffer: false }, None);
+         // the placed vertices, packed the Vulkan raster's own way
+         let vertex = |x: f32, y: f32, r: f32, g: f32, b: f32| -> [f32; 24] {
+             let mut data = [0.0f32; 24];
+diff --git a/crates/zakuro-gpu/src/raster/pica_state.rs b/crates/zakuro-gpu/src/raster/pica_state.rs
+new file mode 100644
+index 0000000..6212243
+--- /dev/null
++++ b/crates/zakuro-gpu/src/raster/pica_state.rs
+@@ -0,0 +1,111 @@
++//! Backend-independent PICA Draw block, matching raster.frag std140.
++use crate::{fog, proctex};
++use crate::lighting::Lighting;
++use super::{BoundTexture, DepthMap, Wrap, TEXTURE_UNIT_BASES};
++
++pub(crate) const DRAW_WORDS: usize = 408;
++
++pub(crate) fn draw_uniform_block(
++    words: &mut Vec<u32>, registers: &[u32], texture_config: u32,
++    depth_flags: u32, depth_map: DepthMap, lighting: Option<&Lighting>,
++) {
++    words.clear();
++    for base in [0x0C0, 0x0C8, 0x0D0, 0x0D8, 0x0F0, 0x0F8] {
++        words.extend([registers[base], registers[base+1], registers[base+2], registers[base+3], registers[base+4], 0, 0, 0]);
++    }
++    words.extend([registers[0x0E0], registers[0x0FD], registers[0x0A0], texture_config]);
++    for base in TEXTURE_UNIT_BASES {
++        words.extend([registers[base+2], registers[base], 0, 0]);
++    }
++    words.extend([depth_flags, lighting.is_some() as u32, depth_map.scale.to_bits(), depth_map.offset.to_bits()]);
++    match lighting {
++        Some(lighting) => lighting.pack(words),
++        None => words.resize(396, 0),
++    }
++    for register in proctex::REG_CONFIG..proctex::REG_CONFIG+6 { words.push(registers[register]); }
++    words.extend([0, 0, registers[fog::REG_COLOR], 0, 0, 0]);
++    debug_assert_eq!(words.len(), DRAW_WORDS);
++}
++
++#[cfg(test)]
++mod tests {
++    #[test]
++    fn complete_draw_layout_and_three_texture_units() {
++        let registers: Vec<u32> = (0..0x300).collect();
++        let mut words = vec![u32::MAX; 600];
++        super::draw_uniform_block(&mut words, &registers, 7, 3,
++            super::DepthMap { scale: 0.5, offset: 0.25, w_buffer: true }, None);
++        assert_eq!(words.len(), 408);
++        assert_eq!(&words[48..52], &[0xE0, 0xFD, 0xA0, 7]);
++        assert_eq!(&words[52..64], &[0x83, 0x81, 0, 0, 0x93, 0x91, 0, 0, 0x9B, 0x99, 0, 0]);
++        assert_eq!(&words[64..68], &[3, 0, 0.5f32.to_bits(), 0.25f32.to_bits()]);
++        assert!(words[68..396].iter().all(|word| *word == 0));
++        assert_eq!(words[404], registers[crate::fog::REG_COLOR]);
++    }
++}
++
++/// how a sampler filters and wraps, and goes between an image's sizes.
++#[derive(Clone, Copy, PartialEq, Eq, Hash)]
++pub(super) struct Filtering {
++    /// bilinear rather than point sampling, magnifying and minifying.
++    pub(super) magnify: bool,
++    pub(super) minify: bool,
++    /// blends the two sizes about the level of detail rather than taking
++    /// the nearer.
++    pub(super) between: bool,
++    pub(super) s: Wrap,
++    pub(super) t: Wrap,
++    /// the levels of detail it is kept between, see Lod, and its bias in
++    /// 256ths.
++    pub(super) levels: (u8, u8),
++    pub(super) bias: i16,
++}
++
++impl Filtering {
++    /// a unit's, for its texture's sizes.
++    pub(super) fn of(bound: &BoundTexture) -> Filtering {
++        let lod = bound.lod;
++        match bound.levels {
++            // one size is only ever magnified
++            1 => Filtering { minify: bound.linear, between: false, levels: (0, 0), bias: 0, ..Filtering::wrapping(bound) },
++            _ => Filtering { minify: lod.linear, between: lod.between, levels: (lod.min, lod.max), bias: lod.bias, ..Filtering::wrapping(bound) },
++        }
++    }
++
++    /// for a texture pack's picture, going between its sizes down to
++    /// smallest, a little sharper than the rate the coordinates change
++    /// gives, so that one drawn a little smaller than its own size, as at 3
++    /// times the console's resolution, stays as sharp as it is.
++    pub(super) fn picture(bound: &BoundTexture, smallest: u32) -> Filtering {
++        Filtering {
++            minify: bound.linear,
++            between: smallest > 0 && bound.linear,
++            levels: (0, smallest as u8),
++            bias: if smallest > 0 { -128 } else { 0 },
++            ..Filtering::wrapping(bound)
++        }
++    }
++
++    /// the unit's magnifying filter and wrapping, one size of its texture.
++    pub(super) fn wrapping(bound: &BoundTexture) -> Filtering {
++        Filtering { s: bound.wrap_s, t: bound.wrap_t, magnify: bound.linear, ..Filtering::OFF }
++    }
++
++    /// what a unit that is off samples with.
++    pub(super) const OFF: Filtering =
++        Filtering { magnify: false, minify: false, between: false, s: Wrap::ClampToEdge, t: Wrap::ClampToEdge, levels: (0, 0), bias: 0 };
++}
++
++
++/// Lighting, procedural and fog tables in the shader storage-buffer order.
++pub(crate) fn table_words(out: &mut Vec<u32>, tables: &crate::lighting::Tables,
++    procedural: &proctex::Tables, fog: &fog::Table) {
++    out.clear();
++    let (colors, steps) = procedural.colors();
++    for part in [tables.entries().as_flattened().as_flattened(),
++        procedural.maps().as_flattened().as_flattened(), colors.as_flattened(),
++        steps.as_flattened(), fog.entries().as_flattened()] {
++        out.extend(part.iter().map(|value| value.to_bits()));
++    }
++    debug_assert_eq!(out.len(), 15360);
++}
+-- 
+2.56.0
+
