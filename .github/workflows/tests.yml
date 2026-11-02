@@ -2,7 +2,7 @@ name: tests
 
 on:
   push:
-    branches: [main, master, 'fix/**']
+    branches: [dev, main, master, 'fix/**']
   pull_request:
 
 jobs:
@@ -40,6 +40,10 @@ jobs:
 
   native-tests:
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: [default, metal]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -51,4 +55,9 @@ jobs:
         run: rustup toolchain install 1.99.1 --profile minimal
       - name: native runtime tests
         working-directory: vendors/zakuro
-        run: cargo +1.99.1 test --locked --workspace
+        run: |
+          if [ "${{ matrix.features }}" = metal ]; then
+            cargo +1.99.1 test --locked --workspace --features metal --no-run
+          else
+            cargo +1.99.1 test --locked --workspace
+          fi

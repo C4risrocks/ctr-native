@@ -55,3 +55,6 @@ Los P2 de Metal siguen abiertos en el plan del pipeline.
 | `0033-metal-resources-slot.patch` | **M1.1 A4**: `Resources` lleva `metal_hardware: Option<HardwareMetal>` (built por `with_hosts` cuando el crate compila el metal feature) — el slot del app para los draws sobre Metal | local (Metal) |
 | `0034-metal-pack-placed.patch` | **M1.1 A4**: `pack_placed` — el pack del `place()` de hardware.rs espejado: los `Screen` del CPU-placed a las filas 24-float del `PlacedDraw` (el honest shape del executor) | local (Metal) |
 | `0035-metal-uniform-block-builder.patch` | **M1.1 A4**: `draw_uniform_block` — los words del Draw block desde los registers (los 6 stage pairs, el update/color/alpha-test/texture-config, las units, el depth flags) — la identical shape que el hardware.rs llena | local (Metal) |
+
+0036-tests-shared-transfer.patch corrige las referencias de tests al tipo
+Transfer compartido extraído a raster.rs; incluido en el lock.

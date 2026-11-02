@@ -144,3 +144,18 @@ Los cuatro P1 están corregidos; los cinco P2 conservan su estado indicado.
 
 Validación del cierre P1: 75 pruebas Python (una omitida por la integración
 registrada en P2-9), Ruff, Pyright y bootstrap local y desde clones nuevos correctos.
+
+## Estabilización ampliada — ejecución iniciada 2026-11-02
+
+- S1: corregidas las 14 referencias a Transfer, exportadas como 0036;
+  lock sincronizado con toda la serie hasta 0036.
+- S2: CI habilitado para dev y compilación de tests con Metal; los tests
+  que requieren GPU física deben ejecutarse localmente y no contarse como
+  validados por compilar en un runner sin GPU.
+- Pendientes de esta ampliación: S3 huella AOT v2, S4 integración real
+  obligatoria, conexión completa M1.1, batches/presentación directa y M2.1.
+- Se conserva Vulkan por defecto. El cierre de M1.1 exige paridad y >=85%
+  del throughput Vulkan, con benchmark controlado y validación de usuario.
+
+Validación S1/S2: suites nativas default y Metal correctas; bootstrap local
+y reconstrucción desde clones nuevos correctos. S3/S4/M1.1/M2.1 no están cerrados.
