@@ -1,0 +1,312 @@
+From a2a8bb386dc5e36dca448648bb90cc1dac301cf5 Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 20:21:30 -0600
+Subject: [PATCH] fix: bound the Metal texture and surface caches
+
+PICA textures keep at most 256 entries and 64 MiB of texels; the least recently bound go first. Surfaces keep at most 64 entries, trimmed least recently used after each draw and transfer. Bindings and in-flight draws keep their own Metal references, and a dropped surface reloads from guest memory on its next use.
+---
+ .../zakuro-gpu/src/raster/metal_hardware.rs   |  52 +++++++-
+ .../src/raster/metal_hardware/coherence.rs    |   1 +
+ .../src/raster/metal_hardware/pica.rs         | 112 +++++++++++++++++-
+ 3 files changed, 157 insertions(+), 8 deletions(-)
+
+diff --git a/crates/zakuro-gpu/src/raster/metal_hardware.rs b/crates/zakuro-gpu/src/raster/metal_hardware.rs
+index 32b78b2..b7b3f51 100644
+--- a/crates/zakuro-gpu/src/raster/metal_hardware.rs
++++ b/crates/zakuro-gpu/src/raster/metal_hardware.rs
+@@ -467,6 +467,8 @@ pub struct HardwareMetal {
+     failed: bool,
+     pica_textures: std::collections::HashMap<usize, pica::Texture>,
+     pica_samplers: std::collections::HashMap<super::pica_state::Filtering, Retained<ProtocolObject<dyn objc2_metal::MTLSamplerState>>>,
++    /// the recency stamps the texture and surface caches evict by.
++    clock: u64,
+ }
+ 
+ /// what a draw's vertices go through on Metal, the Vulkan twin's enum.
+@@ -508,7 +510,7 @@ impl HardwareMetal {
+         // first, the batch's own defines grow it honestly when A4's real
+         // draws land inside
+         let ring = Ring::new(device.as_ref(), 8 << 20)?;
+-        Ok(Self { device, queue, libraries, entries, ring, surfaces: Vec::new(), depths: Vec::new(), pipelines: Default::default(), depth_states: Default::default(), failed: false, pica_textures: Default::default(), pica_samplers: Default::default() })
++        Ok(Self { device, queue, libraries, entries, ring, surfaces: Vec::new(), depths: Vec::new(), pipelines: Default::default(), depth_states: Default::default(), failed: false, pica_textures: Default::default(), pica_samplers: Default::default(), clock: 0 })
+     }
+ 
+     pub fn function(
+@@ -1224,8 +1226,13 @@ struct MetalSurface {
+     scale: u32,
+     /// the guest's bytes the texture matched last.
+     shadow: Vec<u8>,
++    /// the clock stamp of the operation that last used the surface.
++    used: u64,
+ }
+ 
++/// the surfaces kept beyond the ones an operation uses; the least recently used go first.
++const SURFACE_ENTRIES: usize = 64;
++
+ impl MetalSurface {
+     /// the guest's bytes a whole surface takes.
+     fn size(&self) -> u32 {
+@@ -1379,6 +1386,8 @@ impl HardwareMetal {
+         use objc2_metal::{MTLStorageMode, MTLTextureDescriptor, MTLTextureUsage};
+         coherence::validate_surface(addr, width, height, format.bytes_per_pixel() as u32, tiled)
+             .map_err(|e| e.to_string())?;
++        self.clock += 1;
++        let stamp = self.clock;
+ 
+         let index = self
+             .surfaces
+@@ -1389,7 +1398,10 @@ impl HardwareMetal {
+                     && surface.tiled == tiled && surface.scale == scale
+             });
+         let index = match index {
+-            Some(index) => index,
++            Some(index) => {
++                self.surfaces[index].used = stamp;
++                index
++            }
+             None => {
+                 let descriptor = MTLTextureDescriptor::new();
+                 descriptor.setPixelFormat(MTLPixelFormat::RGBA8Unorm);
+@@ -1410,6 +1422,7 @@ impl HardwareMetal {
+                     tiled,
+                     scale,
+                     shadow: Vec::new(),
++                    used: stamp,
+                 });
+                 self.surfaces.len() - 1
+             }
+@@ -1465,6 +1478,19 @@ impl HardwareMetal {
+ /// size, input height, output height, scale, flip, and the two formats.
+ #[cfg(all(target_os = "macos", feature = "metal"))]
+ impl HardwareMetal {
++    /// drops the least recently used surfaces beyond the limit. surfaces hold
++    /// nothing memory lacks (every write-back is synchronous), so a dropped
++    /// one reloads on its next use.
++    fn trim_surfaces(&mut self) {
++        while self.surfaces.len() > SURFACE_ENTRIES {
++            let oldest = self.surfaces.iter().enumerate()
++                .min_by_key(|(_, surface)| surface.used)
++                .map(|(index, _)| index)
++                .expect("a surface");
++            self.surfaces.remove(oldest);
++        }
++    }
++
+     pub(crate) fn display_transfer<M: crate::GpuMemory>(
+         &mut self,
+         memory: &mut M,
+@@ -1564,6 +1590,7 @@ impl HardwareMetal {
+             return Err("Metal transfer execution failed".into());
+         }
+         self.write_back(memory, output_index)?;
++        self.trim_surfaces();
+         Ok(())
+     }
+ }
+@@ -1722,6 +1749,26 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn surfaces_past_the_limit_are_trimmed_least_recently_used_first() {
++        let mut hardware = HardwareMetal::new().expect("the Metal raster constructs");
++        let mut memory = HostMemory::new();
++        hardware.check_surface(&mut memory, 0x4000, (16, 16), ColorFormat::Rgba8, false).unwrap();
++        hardware.check_surface(&mut memory, 0x1000, (16, 16), ColorFormat::Rgba8, false).unwrap();
++        for index in 0..SURFACE_ENTRIES as u32 {
++            hardware
++                .check_surface(&mut memory, 0x10_0000 + index * 0x1000, (16, 16), ColorFormat::Rgba8, false)
++                .unwrap();
++        }
++        hardware.check_surface(&mut memory, 0x1000, (16, 16), ColorFormat::Rgba8, false).unwrap();
++        hardware.trim_surfaces();
++        let addrs: Vec<u32> = hardware.surfaces.iter().map(|surface| surface.addr).collect();
++        assert_eq!(addrs.len(), SURFACE_ENTRIES);
++        assert!(!addrs.contains(&0x4000), "the least recently used goes first");
++        assert!(!addrs.contains(&0x10_0000), "then the oldest of the rest");
++        assert!(addrs.contains(&0x1000), "a surface used again stays");
++    }
++
+     #[test]
+     fn stage_block_stages_once_and_reuses_the_offset() {
+         use objc2_metal::{MTLCreateSystemDefaultDevice, MTLDevice as _};
+@@ -1961,6 +2008,7 @@ mod tests {
+             tiled: false,
+             scale: 1,
+             shadow: Vec::new(),
++            used: 0,
+         });
+ 
+         // the write-back: the empty texture encodes zeros into the guest
+diff --git a/crates/zakuro-gpu/src/raster/metal_hardware/coherence.rs b/crates/zakuro-gpu/src/raster/metal_hardware/coherence.rs
+index 4f42556..976104c 100644
+--- a/crates/zakuro-gpu/src/raster/metal_hardware/coherence.rs
++++ b/crates/zakuro-gpu/src/raster/metal_hardware/coherence.rs
+@@ -539,6 +539,7 @@ impl HardwareMetal {
+         if let Some((index, _)) = depth_index {
+             self.finish_depth(memory, index)?;
+         }
++        self.trim_surfaces();
+         cache.invalidate_range(t.addr, len);
+         if let (Some(d), Some(n)) = (draw.depth, depth_len) {
+             cache.invalidate_range(d.addr, n);
+diff --git a/crates/zakuro-gpu/src/raster/metal_hardware/pica.rs b/crates/zakuro-gpu/src/raster/metal_hardware/pica.rs
+index 96e3c18..2ac5f88 100644
+--- a/crates/zakuro-gpu/src/raster/metal_hardware/pica.rs
++++ b/crates/zakuro-gpu/src/raster/metal_hardware/pica.rs
+@@ -17,12 +17,18 @@ impl OwnedTextureBinding {
+         }
+     }
+ }
++/// the textures the cache keeps: beyond either limit, the least recently
++/// bound go; a draw holding one keeps its own reference to the Metal texture.
++const PICA_TEXTURE_ENTRIES: usize = 256;
++const PICA_TEXTURE_BYTES: usize = 64 << 20;
++
+ pub(super) struct Texture {
+     image: Retained<ProtocolObject<dyn MTLTexture>>,
+     texels: Arc<[[u8; 4]]>,
+     width: u32,
+     height: u32,
+     levels: u32,
++    used: u64,
+ }
+ impl HardwareMetal {
+     pub(crate) fn bind_pica_texture(
+@@ -57,14 +63,24 @@ impl HardwareMetal {
+         if bound.texels.len() != count {
+             return Err("Metal mip chain length mismatch".into());
+         }
++        self.clock += 1;
++        let stamp = self.clock;
+         let key = Arc::as_ptr(&bound.texels) as *const [u8; 4] as usize;
+-        let cached = self.pica_textures.get(&key).is_some_and(|entry| {
+-            Arc::ptr_eq(&entry.texels, &bound.texels)
+-                && entry.width == bound.width
+-                && entry.height == bound.height
+-                && entry.levels == bound.levels
+-        });
++        let cached = match self.pica_textures.get_mut(&key) {
++            Some(entry)
++                if Arc::ptr_eq(&entry.texels, &bound.texels)
++                    && entry.width == bound.width
++                    && entry.height == bound.height
++                    && entry.levels == bound.levels =>
++            {
++                entry.used = stamp;
++                true
++            }
++            _ => false,
++        };
+         if !cached {
++            self.pica_textures.remove(&key);
++            self.make_texture_room(bound.texels.len() * 4);
+             let descriptor = MTLTextureDescriptor::new();
+             descriptor.setPixelFormat(MTLPixelFormat::RGBA8Unorm);
+             descriptor.setStorageMode(MTLStorageMode::Managed);
+@@ -108,6 +124,7 @@ impl HardwareMetal {
+                     width: bound.width,
+                     height: bound.height,
+                     levels: bound.levels,
++                    used: stamp,
+                 },
+             );
+         }
+@@ -147,6 +164,17 @@ impl HardwareMetal {
+             sampler: self.pica_samplers[&filtering].clone(),
+         })
+     }
++
++    /// drops the least recently bound textures until one of `bytes` fits both limits.
++    fn make_texture_room(&mut self, bytes: usize) {
++        let mut held: usize = self.pica_textures.values().map(|entry| entry.texels.len() * 4).sum();
++        while !self.pica_textures.is_empty()
++            && (self.pica_textures.len() >= PICA_TEXTURE_ENTRIES || held + bytes > PICA_TEXTURE_BYTES)
++        {
++            let oldest = *self.pica_textures.iter().min_by_key(|(_, entry)| entry.used).expect("a texture").0;
++            held -= self.pica_textures.remove(&oldest).expect("the oldest texture").texels.len() * 4;
++        }
++    }
+ }
+ 
+ #[derive(Clone, Copy, Default)]
+@@ -412,4 +440,76 @@ mod resource_tests {
+         bound.texels = Arc::from(vec![[0u8; 4]]);
+         assert!(hardware.bind_pica_texture(&bound).is_err());
+     }
++
++    fn texture(seed: u32, side: u32) -> BoundTexture {
++        BoundTexture {
++            texels: Arc::from(vec![[seed as u8, 0, 0, 255]; (side * side) as usize]),
++            drawn: None,
++            linear: false,
++            wrap_s: Wrap::Repeat,
++            wrap_t: Wrap::Repeat,
++            width: side,
++            height: side,
++            border: [0.0; 4],
++            replacement: None,
++            levels: 1,
++            lod: super::super::super::Lod::default(),
++        }
++    }
++
++    fn key(bound: &BoundTexture) -> usize {
++        Arc::as_ptr(&bound.texels) as *const [u8; 4] as usize
++    }
++
++    #[test]
++    fn pica_textures_stay_within_their_entry_limit() {
++        let mut hardware = HardwareMetal::new().unwrap();
++        let first = texture(0, 16);
++        let kept = hardware.bind_pica_texture(&first).unwrap();
++        for seed in 1..PICA_TEXTURE_ENTRIES as u32 + 8 {
++            hardware.bind_pica_texture(&texture(seed, 16)).unwrap();
++        }
++        assert_eq!(hardware.pica_textures.len(), PICA_TEXTURE_ENTRIES);
++        assert!(!hardware.pica_textures.contains_key(&key(&first)), "the oldest binding went");
++        let mut pixel = [0u8; 4];
++        unsafe {
++            kept.texture.getBytes_bytesPerRow_fromRegion_mipmapLevel(
++                NonNull::from(&mut pixel[..]).cast(),
++                4,
++                MTLRegion {
++                    origin: MTLOrigin { x: 0, y: 0, z: 0 },
++                    size: MTLSize { width: 1, height: 1, depth: 1 },
++                },
++                0,
++            );
++        }
++        assert_eq!(pixel, [0, 0, 0, 255], "a draw's binding outlives its eviction");
++    }
++
++    #[test]
++    fn a_rebound_texture_outlives_the_least_recently_bound() {
++        let mut hardware = HardwareMetal::new().unwrap();
++        let first = texture(0, 16);
++        let second = texture(1, 16);
++        hardware.bind_pica_texture(&first).unwrap();
++        hardware.bind_pica_texture(&second).unwrap();
++        for seed in 2..PICA_TEXTURE_ENTRIES as u32 {
++            hardware.bind_pica_texture(&texture(seed, 16)).unwrap();
++        }
++        hardware.bind_pica_texture(&first).unwrap();
++        hardware.bind_pica_texture(&texture(PICA_TEXTURE_ENTRIES as u32, 16)).unwrap();
++        assert!(hardware.pica_textures.contains_key(&key(&first)), "the rebound texture stays");
++        assert!(!hardware.pica_textures.contains_key(&key(&second)), "the least recently bound goes");
++    }
++
++    #[test]
++    fn pica_textures_stay_within_their_byte_budget() {
++        let mut hardware = HardwareMetal::new().unwrap();
++        for seed in 0..80u32 {
++            hardware.bind_pica_texture(&texture(seed, 512)).unwrap();
++        }
++        let held: usize = hardware.pica_textures.values().map(|entry| entry.texels.len() * 4).sum();
++        assert!(held <= PICA_TEXTURE_BYTES, "held {held} bytes");
++        assert!(hardware.pica_textures.len() < 80);
++    }
+ }
+-- 
+2.56.0
+

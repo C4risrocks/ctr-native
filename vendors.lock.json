@@ -4,7 +4,7 @@
     "zakuro": {
       "url": "https://github.com/fearkov/zakuro",
       "commit": "80d78be3852b308d46da6d54817b30451771d9fe",
-      "tree": "2846e3951ffb727221505c0e41d67d936de3458c",
+      "tree": "03c0bc9a82faa0879b1d0b884fc967cf70f7ff72",
       "patch_directory": "docs/patches/zakuro"
     },
     "3dsrecomp": {
