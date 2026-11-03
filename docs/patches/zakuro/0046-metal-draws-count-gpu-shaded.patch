@@ -1,0 +1,29 @@
+From dee7d348c8b69dcf09b05bbb86833f1c7fedc9b6 Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 18:33:44 -0600
+Subject: [PATCH] =?UTF-8?q?stats:=20the=20coherence's=20draws=20count=20gp?=
+ =?UTF-8?q?u-shaded=20=E2=80=94=20the=20kpi's=20MIPS=20meter=20reads=20Met?=
+ =?UTF-8?q?al?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ crates/zakuro-gpu/src/raster.rs | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/crates/zakuro-gpu/src/raster.rs b/crates/zakuro-gpu/src/raster.rs
+index 4945587..487a5b0 100644
+--- a/crates/zakuro-gpu/src/raster.rs
++++ b/crates/zakuro-gpu/src/raster.rs
+@@ -3459,6 +3459,7 @@ fn rasterize<M: GpuMemory>(registers: &[u32], memory: &mut M, resources: &mut Re
+                     Ok(()) => {
+                         // the coherence's write-through says memory canonical —
+                         // the guest holds what the GPU drew, nothing further
++                        crate::stats::shaded_gpu();
+                         return Some(triangle_count as u32);
+                     }
+                     Err(error) => {
+-- 
+2.56.0
+
