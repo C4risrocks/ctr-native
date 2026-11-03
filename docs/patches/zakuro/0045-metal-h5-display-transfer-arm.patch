@@ -1,0 +1,60 @@
+From 00a0cc0d53a74eae5a005782aea2735a28539474 Mon Sep 17 00:00:00 2001
+From: C4risrocks <C4risrocks@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 18:29:46 -0600
+Subject: [PATCH] =?UTF-8?q?gpu:=20H5=20=E2=80=94=20the=20display=20transfe?=
+ =?UTF-8?q?rs=20run=20the=20Metal=20host's=20own=20coherence=20executor?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+the GSP display transfer builds the same Transfer shape and hands it
+to the coherence layer's own display_transfer (write-through): the
+guest surfaces load honestly, transfer.comp averages the blocks, and
+guest memory lands canonical — the fills' sync_guest already invalidates the
+textures the same route reads.
+---
+ crates/zakuro-gpu/src/lib.rs | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/crates/zakuro-gpu/src/lib.rs b/crates/zakuro-gpu/src/lib.rs
+index 3da2ebf..4fb03c5 100644
+--- a/crates/zakuro-gpu/src/lib.rs
++++ b/crates/zakuro-gpu/src/lib.rs
+@@ -472,6 +472,34 @@ impl Gpu {
+                 Err(error) => log::error!("the GPU could not transfer a buffer, {error}"),
+             }
+         }
++
++        // the Metal host's honest transfer: the coherence layer's own
++        // write-through path runs the same transfer.comp compute, and the
++        // guest's memory lands canonical after the run
++        #[cfg(all(feature = "metal", target_os = "macos"))]
++        if let Some(metal) = self.resources.metal_hardware.as_mut() {
++            let transfer = raster::Transfer {
++                input: input_base,
++                output: output_base,
++                input_width,
++                output_width,
++                output_height,
++                copy: (copy_width, copy_height),
++                scale: (scale_x, scale_y),
++                flip: flip_vertically,
++                input_linear,
++                output_tiled,
++                input_format,
++                output_format,
++            };
++            match metal.display_transfer(memory, &transfer) {
++                Ok(()) => {
++                    self.transfers += 1;
++                    return;
++                }
++                Err(error) => log::error!("the Metal host could not transfer a buffer, {error}"),
++            }
++        }
+         // four bytes a pixel covers every format either side uses
+         self.sync_memory(memory, input_base, input_width * input_height * 4);
+         self.sync_memory(memory, output_base, output_width * output_height * 4);
+-- 
+2.56.0
+

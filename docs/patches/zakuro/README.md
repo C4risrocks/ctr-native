@@ -66,3 +66,4 @@ Estado 2026-11-02 (base técnica `dev`, fd6b6f1): serie hasta 0043, con 0018a in
 bootstrap local y desde clones nuevos verificados contra vendors.lock.json.
 P2-7/P2-8 corregidos en dev; HardwareMetal completo y overlay siguen pendientes.
 | `0044-metal-h5-dispatch-placed-arm.patch` | **M1.1 H5**: el despacho de `raster::rasterize`'s arm placed al `HardwareMetal::draw_guest` de la coherencia — RasterState desde los registers, pack de los vértices, uniforms 408 del pica_state compartido, tablas, las_bindings por unidad (los packs y surface textures caen coherentemente al software); `Resources::with_hosts` ya corre | local (Metal) |
+| `0045-metal-h5-display-transfer-arm.patch` | **M1.1 H5**: `Gpu::display_transfer` crece su arm metal — la coherencia corre transfer.comp sobre los dos surfaces del guest con mem caregiver canónica (los fills' sync_guest ya invalidan las texturas por el mismo camino) | local (Metal) |
