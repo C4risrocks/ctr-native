@@ -77,6 +77,19 @@ de Draw. Unidades activas sin binding y uniformes truncados se rechazan.
 El executor recibe los samplers y uniformes del caller: falta construirlos
 completamente desde PICA y conectar el despacho. M1.1 y M2.1 siguen abiertos.
 
+## El H5 en juego (la sesión 2026-11-03, la prueba honesta)
+
+ALBW headless con `--rasterizer hardware + --renderer metal`: el boot corre (las cuatro
+binds del rack arman) y los draws del juego entran por el despacho H5 — **el proceso
+muere sin panic a los ~30-45 s** (stderr queda dentro del IR de cranelift del AOT,
+el audio nunca produce: ejecutar el juego via la coherencia congela en su arranque).
+
+El vulkan de la misma ronda corre 45 s sin caerse (los dry warnings continúan).
+**El H6 debe empezar con**: reproducir el freeze bajo `lldb`, las llamadas del
+despacho (el draw_guest/sync_guest) y el crash del AOT-compilador del thread —
+la coherencia se probó única (los H3/H4 tests) pero no corrió bajo el juego
+real. El vulkan-MoltenVK queda como la vía jugable mientras.
+
 ## La spec del A4 restante (el twin de `hardware.rs` — la pieza final de M1.1)
 
 Las funciones del `hardware.rs` (las líneas de origen) que el Metal twin
