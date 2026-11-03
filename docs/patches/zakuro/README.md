@@ -65,3 +65,4 @@ como otro parche numerado y actualiza su hash de árbol en el lock.
 Estado 2026-11-02 (base técnica `dev`, fd6b6f1): serie hasta 0043, con 0018a intercalado;
 bootstrap local y desde clones nuevos verificados contra vendors.lock.json.
 P2-7/P2-8 corregidos en dev; HardwareMetal completo y overlay siguen pendientes.
+| `0044-metal-h5-dispatch-placed-arm.patch` | **M1.1 H5**: el despacho de `raster::rasterize`'s arm placed al `HardwareMetal::draw_guest` de la coherencia — RasterState desde los registers, pack de los vértices, uniforms 408 del pica_state compartido, tablas, las_bindings por unidad (los packs y surface textures caen coherentemente al software); `Resources::with_hosts` ya corre | local (Metal) |
