@@ -48,7 +48,7 @@ PICA-VS trasladado a MSL con shading por GPU frente al CPU-shading
 | **M1.0.5 ✅ present desacoplado (patch 0019)** | el bundle Metal completo (device, queue, layer, pipeline, texturas ping-pong) en thread propio; canal de 1 frame en vuelo; `setDrawableSize` solo en cambios | partida real **47.5 fps** (×1.84 vs 25.8), 10.5 min sin freeze; flame-graph: el present salió del presupuesto, el cuello restante es el fill rayon del raster (zona M1.1) · smoke 7/7 |
 | **M2 ✅** | companion Metal (por renderer-kind del main), settings persistentes (`renderer: "metal"` toml + combo menús), `native_smoke` +2 casos metal | **7/7 escenarios nativos verdes** (5 vulkan + 2 metal, single y shared) |
 | **M3 ◐ comparación parcial** | dos columnas medidas en `docs/zakuro-macos.md`: **Vulkan 58.1 fps (dry 0.71/min)** vs **Metal+software 47.5 fps (dry alta, cadencia sub-60)** | HardwareMetal **no tiene resultado**: el plan Metal **no se declara cerrado** hasta medir M1.1 |
-| **M1.1 ◐ H1–H5 ✅ · H6–H7 abiertos** | **A1 ✅ (0021)**: el rack de 8 shaders → MSL por naga (device compila 8/8) · **A2 ✅ (0022)**: formatos/pipelines (hallazgo: Apple silicon **no renderiza D24S8** — el raster Metal va por el float twin **D32F_S8**) · **A3a ✅ (0023)**: la cadena de ejecución corriendo hasta píxeles con asserts por cuadrante · **A3b ✅ (0024)**: `raster.frag`+`raster.vert` reales con las uniformes PICA del `Draw` block (DYNAMIC=1 tev/misc/units leídas del std140), combiners verificados por píxel · **A3c ✅ (0025)**: los compute shaders (transfer/depth/upright/upright_image) con su mapa de bindings verbatim y su ejecución comprobada · **A4 — el executor ✅ (0028)**: `HardwareMetal::draw_placed` corre un draw end-to-end (ring staging + pipeline per key + indexed draw + pass con depth) con los píxeles verificados. **A4 — conservación entre draws ✅ (0037), máscaras RGBA y pass sin profundidad ✅ (0038), bindings del executor ✅ (0039)**; **A4 — el Ring ✅ (0026), las uniformes ✅ (0027), el TexturePool ✅ (0029), los Surfaces ✅ (0030), el display transfer ✅ (0031), el write-back ✅ (0032), el slot del app ✅ (0033: `Resources.metal_hardware` declarado; `with_hosts` sin llamadas actuales)** — la capa decode del CPU es gratis para el port (el `TextureCache` compartido) y el `Transfer` del GSP ya vive en `raster.rs` (el shape común). **H5 ✅ (0044-0045)**: el despacho de `raster::rasterize`'s arm placed corre el `draw_guest` de la coherencia (el RasterState desde los registers, los packs/surface-textures caen coherentemente al software), y `Gpu::display_transfer` crece su arm metal (transfer.comp sobre los surfaces, memoria canónica). **Queda**: H5 el smoke metal-hardware del executor; **H6** el batching/presentación directa a ambas ventanas; **H7** headless ×600: MIPS ≥ 85% del mejor camino. **La jugabilidad con raster de hardware sobre Metal YA corre** por la vía Vulkan→MoltenVK (la misma Metal deuda — 58.1 fps en el kpi del 2026-11-01); el Metal-native completo queda como el proyecto multi-sesión que es |
+| **M1.1 ◐ H1–H5 ✅ · H6 ✓ (residencia+1wait, el juego corre) · H7 abierto** | **A1 ✅ (0021)**: el rack de 8 shaders → MSL por naga (device compila 8/8) · **A2 ✅ (0022)**: formatos/pipelines (hallazgo: Apple silicon **no renderiza D24S8** — el raster Metal va por el float twin **D32F_S8**) · **A3a ✅ (0023)**: la cadena de ejecución corriendo hasta píxeles con asserts por cuadrante · **A3b ✅ (0024)**: `raster.frag`+`raster.vert` reales con las uniformes PICA del `Draw` block (DYNAMIC=1 tev/misc/units leídas del std140), combiners verificados por píxel · **A3c ✅ (0025)**: los compute shaders (transfer/depth/upright/upright_image) con su mapa de bindings verbatim y su ejecución comprobada · **A4 — el executor ✅ (0028)**: `HardwareMetal::draw_placed` corre un draw end-to-end (ring staging + pipeline per key + indexed draw + pass con depth) con los píxeles verificados. **A4 — conservación entre draws ✅ (0037), máscaras RGBA y pass sin profundidad ✅ (0038), bindings del executor ✅ (0039)**; **A4 — el Ring ✅ (0026), las uniformes ✅ (0027), el TexturePool ✅ (0029), los Surfaces ✅ (0030), el display transfer ✅ (0031), el write-back ✅ (0032), el slot del app ✅ (0033: `Resources.metal_hardware` declarado; `with_hosts` sin llamadas actuales)** — la capa decode del CPU es gratis para el port (el `TextureCache` compartido) y el `Transfer` del GSP ya vive en `raster.rs` (el shape común). **H5 ✅ (0044-0045)**: el despacho de `raster::rasterize`'s arm placed corre el `draw_guest` de la coherencia (el RasterState desde los registers, los packs/surface-textures caen coherentemente al software), y `Gpu::display_transfer` crece su arm metal (transfer.comp sobre los surfaces, memoria canónica). **Queda**: H5 el smoke metal-hardware del executor; **H6** el batching/presentación directa a ambas ventanas; **H7** headless ×600: MIPS ≥ 85% del mejor camino. **La jugabilidad con raster de hardware sobre Metal YA corre** por la vía Vulkan→MoltenVK (la misma Metal deuda — 58.1 fps en el kpi del 2026-11-01); el Metal-native completo queda como el proyecto multi-sesión que es |
 | **M2.1 ⏳ desarrollo abierto** | overlay egui dibujado bajo Metal | el overlay se dibuja sobre las pantallas en la misma ventana |
 
 ## Incremento A4 — 2026-11-02, parche 0037
@@ -77,18 +77,29 @@ de Draw. Unidades activas sin binding y uniformes truncados se rechazan.
 El executor recibe los samplers y uniformes del caller: falta construirlos
 completamente desde PICA y conectar el despacho. M1.1 y M2.1 siguen abiertos.
 
-## El H5 en juego (la sesión 2026-11-03, la prueba honesta)
+## El H6 (la sesión 2026-11-03, la prueba honesta) — el freeze resuelto
 
-ALBW headless con `--rasterizer hardware + --renderer metal`: el boot corre (las cuatro
-binds del rack arman) y los draws del juego entran por el despacho H5 — **el proceso
-muere sin panic a los ~30-45 s** (stderr queda dentro del IR de cranelift del AOT,
-el audio nunca produce: ejecutar el juego via la coherencia congela en su arranque).
+El `sample` del macOS fue el diagnóstico: **no había panic** — el juego estaba
+vivo pero a segundos por frame. El `draw_guest` write-through cargaba ~⅓ del
+thread principal: creación de texturas y planes por draw, decodificación por
+píxel a ambos lados y **tres waits por draw**/upload/download. El H6 (0047)
+las monta como el raster Vulkan ya las tiene:
 
-El vulkan de la misma ronda corre 45 s sin caerse (los dry warnings continúan).
-**El H6 debe empezar con**: reproducir el freeze bajo `lldb`, las llamadas del
-despacho (el draw_guest/sync_guest) y el crash del AOT-compilador del thread —
-la coherencia se probó única (los H3/H4 tests) pero no corrió bajo el juego
-real. El vulkan-MoltenVK queda como la vía jugable mientras.
+- color y profundidad **residentes** con shadow: un draw solo redondea lo que
+  el guest movió desde el último fence; `sync_guest(memory,…)`
+  escribe de vuelta antes de soltar (contrato write-through en los fences)
+- **un command buffer y un wait por draw** (blits de profundidad + render +
+  readback + sync del color en la misma submission)
+- el despacho honesto: los refusals (state/packs/binds) dejan la rama sin
+  dibujar y el software saca esos píxeles
+
+ALBW `--rasterizer hardware --renderer metal` corre **más de 90 s con el audio
+a ritmo de Vulkan** (el freeze de 30-45 s era thrash, no un deadlock). Los
+smoke metal 7/7 a 60 fps, 156 tests GPU verdes.
+
+**Queda del H6**: batch de varios draws por buffer (el ring ya es por
+submission) — el `waitUntilCompleted` sigue ~23% del main; y el volumen de
+refusals, que todavía carga los fills software por los workers del rayon.
 
 ## La spec del A4 restante (el twin de `hardware.rs` — la pieza final de M1.1)
 
